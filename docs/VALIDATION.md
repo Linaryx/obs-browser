@@ -99,6 +99,25 @@ Raw results remain in ignored `test-results/`; no real overlay URLs or stream cr
   patches were included from the local test source tree. Newer commits/packages supersede this initial artifact.
 - The fork and AUR package have not been published. GitHub Actions has not run remotely.
 
+## Live-stream load (local RTMP, not Twitch)
+
+Test system as above. Scene `01 · Начало`: 10 browser overlays (9 visible, 1 hidden), capture sources
+disabled. 1920×1080 60 FPS, x264 `veryfast`, 6000 kbps. `tests/stream_audit.py`, 60 seconds per stream.
+
+Single stream: fork GPU render 2.68 ms, fork CPU 3.51 ms, stock (NVIDIA blocked) 2.99 ms; all accepted,
+zero output drops, render drops 85–90 of ~4475.
+
+Five parallel streams per preset (`test-results/p-*`):
+
+| Preset | Tree CPU | Output dropped per stream | Render dropped per stream |
+|---|---|---|---|
+| Fork GPU | ~314% | 0–45 | ~170–190 |
+| Fork CPU | ~560% | 1108–1510 | 291–583 |
+| Stock | ~568% | 435–1700 | 318–432 |
+
+Interpretation: fork CPU and stock load the CPU similarly. The GPU path removes most CPU load and
+dropped output frames. One run per preset: not a statistical comparison.
+
 ## Not proven by compilation or this fixture
 
 - Custom XWayland docks, Twitch/Twir/third-party overlays and the complete OBS JS binding surface.
