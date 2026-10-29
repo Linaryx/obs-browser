@@ -36,5 +36,5 @@ package() {
   install -Dm644 "$srcdir/obs-browser/packaging/obs-nvidia-browser.desktop" "$pkgdir/usr/share/applications/obs-nvidia-browser.desktop"
   install -Dm644 "$srcdir/$_cef/LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/CEF-LICENSE.txt"
   install -Dm644 "$srcdir/obs-browser/COPYING" "$pkgdir/usr/share/licenses/$pkgname/COPYING"
-  install -Dm644 "$srcdir/obs-browser/README-NVIDIA.md" "$pkgdir/usr/share/doc/$pkgname/README-NVIDIA.md"
+  install -Dm644 "$srcdir/obs-browser/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

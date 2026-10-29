@@ -58,4 +58,4 @@ Additional fork revisions and reuse decisions are recorded in [FORKS.md](FORKS.m
    console visibility is unchanged unless explicitly quieted; media access remains denied by default.
 
 See [validation](VALIDATION.md) for commands, measured results and unverified behavior, and
-[build/packaging instructions](../README-NVIDIA.md) for private runtime installation and rollback.
+[build/packaging instructions](../README.md) for private runtime installation and rollback.
