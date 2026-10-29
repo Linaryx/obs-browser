@@ -1,0 +1,39 @@
+# Set _repo to your published GitHub fork before submitting to AUR.
+pkgname=obs-browser-nvidia-git
+pkgver=2.27.5.r749.gd4db73e
+pkgrel=1
+pkgdesc='Experimental CEF 156 NVIDIA DMA-BUF browser sources for OBS (opt-in launcher)'
+arch=('x86_64')
+url='https://github.com/obsproject/obs-browser'
+license=('GPL-2.0-or-later' 'BSD-3-Clause')
+depends=('obs-studio>=33' 'qt6-base' 'libx11' 'libdrm' 'libglvnd' 'bubblewrap' 'wayland'
+         'alsa-lib' 'at-spi2-core' 'cairo' 'cups' 'dbus' 'expat' 'glib2' 'gtk3'
+         'libxcomposite' 'libxdamage' 'libxext' 'libxfixes' 'libxkbcommon'
+         'libxrandr' 'mesa' 'nspr' 'nss' 'pango' 'systemd-libs')
+makedepends=('git' 'cmake' 'ninja' 'nlohmann-json')
+options=('!strip')
+_repo=${OBS_BROWSER_FORK_URL:-}
+_cef='cef_binary_156.0.14+g4fa4ab5+chromium-156.0.8078.48_linux64_minimal'
+source=("obs-browser::git+${_repo:-https://github.com/REPLACE-ME/obs-browser.git}#branch=experimental/nvidia-cef156"
+        "${_cef}.tar.bz2::https://cef-builds.spotifycdn.com/${_cef//+/%2B}.tar.bz2")
+sha256sums=('SKIP' '4191ac920a91a052eba04afb6ed830d47aed46a3e246c434a2f062c23588dc8a')
+
+pkgver() {
+  cd "$srcdir/obs-browser"
+  printf '2.27.5.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cmake -S "$srcdir/obs-browser" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCEF_ROOT_DIR="$srcdir/$_cef" -DOBS_BROWSER_BUILD_TESTS=OFF -DOBS_BROWSER_ENABLE_DEVTOOLS=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm755 "$srcdir/obs-browser/scripts/obs-nvidia-browser" "$pkgdir/usr/bin/obs-nvidia-browser"
+  install -Dm644 "$srcdir/$_cef/LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/CEF-LICENSE.txt"
+  install -Dm644 "$srcdir/obs-browser/COPYING" "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+  install -Dm644 "$srcdir/obs-browser/README-NVIDIA.md" "$pkgdir/usr/share/doc/$pkgname/README-NVIDIA.md"
+}

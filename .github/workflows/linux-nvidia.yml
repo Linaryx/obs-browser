@@ -1,0 +1,39 @@
+name: Experimental Linux CEF 156
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  arch-build:
+    strategy:
+      matrix:
+        devtools: ['OFF', 'ON']
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Dependencies
+        run: pacman -Syu --noconfirm git cmake ninja obs-studio qt6-base nlohmann-json libdrm libglvnd libx11 wayland curl python
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: /root/.cache/obs-browser-nvidia
+          key: cef-linux64-156.0.14-g4fa4ab5
+      - name: Configure and compile against installed OBS SDK (no OBS rebuild)
+        run: |
+          cef=$(bash scripts/fetch-cef.sh)
+          cmake -S . -B build -G Ninja -DCEF_ROOT_DIR="$cef" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DOBS_BROWSER_BUILD_TESTS=ON -DOBS_BROWSER_ENABLE_DEVTOOLS=${{ matrix.devtools }}
+          cmake --build build -j2
+          ctest --test-dir build --output-on-failure
+          DESTDIR="$PWD/stage" cmake --install build
+          bash -n scripts/*.sh scripts/obs-nvidia-browser packaging/aur/PKGBUILD
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-arch-browser-cef156-devtools-${{ matrix.devtools }}
+          path: |
+            build/obs-browser.so
+            build/obs-browser-page
+            build/browser-test-host
+          # The CEF runtime is fetched separately; artifact is not a complete install.
