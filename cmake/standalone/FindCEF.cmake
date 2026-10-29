@@ -1,0 +1,31 @@
+if(NOT IS_DIRECTORY "${CEF_ROOT_DIR}/include")
+  message(FATAL_ERROR "Set CEF_ROOT_DIR to the extracted CEF 156 minimal distribution")
+endif()
+file(STRINGS "${CEF_ROOT_DIR}/include/cef_version.h" _cef_version REGEX "^#define CEF_VERSION ")
+if(NOT _cef_version MATCHES "156\\.0\\.14\\+g4fa4ab5\\+chromium-156\\.0\\.8078\\.48")
+  message(FATAL_ERROR "This experiment requires pinned CEF 156.0.14+g4fa4ab5 (8078.48), including #4238")
+endif()
+set(CEF_VERSION "156.0.14")
+set(CEF_ROOT "${CEF_ROOT_DIR}")
+include("${CEF_ROOT_DIR}/cmake/FindCEF.cmake")
+# Preserve distro Fortify flags instead of redefining them with CEF's defaults.
+if(CMAKE_CXX_FLAGS MATCHES "_FORTIFY_SOURCE")
+  list(REMOVE_ITEM CEF_COMPILER_FLAGS_RELEASE "-U_FORTIFY_SOURCE" "-D_FORTIFY_SOURCE=2")
+endif()
+set(CEF_API_VERSION "CEF_API_VERSION_EXPERIMENTAL" CACHE STRING "CEF API")
+add_compile_definitions(CEF_API_VERSION=${CEF_API_VERSION})
+add_subdirectory("${CEF_ROOT_DIR}/libcef_dll" "${CMAKE_BINARY_DIR}/libcef_dll_wrapper")
+set_target_properties(libcef_dll_wrapper PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(libcef_dll_wrapper PUBLIC "${CEF_ROOT_DIR}")
+add_library(CEF::Wrapper ALIAS libcef_dll_wrapper)
+add_library(CEF::Library SHARED IMPORTED)
+set_target_properties(CEF::Library PROPERTIES IMPORTED_LOCATION "${CEF_ROOT_DIR}/Release/libcef.so"
+  INTERFACE_INCLUDE_DIRECTORIES "${CEF_ROOT_DIR}")
+set(CEF_LIBRARY "${CEF_ROOT_DIR}/Release/libcef.so")
+set(CEF_FOUND TRUE)
+
+install(DIRECTORY "${CEF_ROOT_DIR}/Release/" DESTINATION ${CMAKE_INSTALL_LIBDIR}/obs-browser-nvidia
+  PATTERN "*.a" EXCLUDE PATTERN "chrome-sandbox" EXCLUDE)
+install(DIRECTORY "${CEF_ROOT_DIR}/Resources/" DESTINATION ${CMAKE_INSTALL_LIBDIR}/obs-browser-nvidia)
+install(FILES "${CEF_ROOT_DIR}/LICENSE.txt" DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/obs-browser-nvidia
+  RENAME CEF-LICENSE.txt)

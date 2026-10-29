@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+html,body { margin:0; background:transparent; overflow:hidden }
+#red {position:absolute;left:0;top:0;width:100px;height:100px;background:red}
+#green {position:absolute;right:0;top:0;width:100px;height:100px;background:rgba(0,255,0,.5)}
+#motion {position:absolute;top:200px;width:80px;height:80px;background:white;animation:move 1s linear infinite alternate}
+@keyframes move {from{left:0}to{left:70%}}
+canvas {position:absolute;left:0;bottom:0}
+</style></head><body><div id="red"></div><div id="green"></div><div id="motion"></div>
+<canvas width="100" height="100" id="gl"></canvas>
+<script>
+const gl = document.getElementById('gl').getContext('webgl');
+if (gl) { gl.clearColor(0,0,1,1); gl.clear(gl.COLOR_BUFFER_BIT); }
+const audio = new AudioContext();
+const oscillator = audio.createOscillator(), gain = audio.createGain();
+gain.gain.value = .03; oscillator.frequency.value = 440;
+oscillator.connect(gain).connect(audio.destination); oscillator.start(); audio.resume();
+window.addEventListener('obsSourceActiveChanged', e => console.log('OBS active', e.detail));
+</script></body></html>

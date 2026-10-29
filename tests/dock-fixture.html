@@ -1,0 +1,8 @@
+<!doctype html><html><head><style>
+html,body {margin:0;min-height:100%;background:#203040;color:white;font:18px sans-serif}
+input {margin:20px;width:75%}
+</style></head><body><h2>Experimental dock audit</h2><input placeholder="Manual focus/typing test">
+<script>
+function report() {console.log('OBS_DOCK_AUDIT:' + innerWidth + 'x' + innerHeight)}
+addEventListener('load', report); addEventListener('resize', report);
+</script></body></html>

@@ -17,6 +17,11 @@
  ******************************************************************************/
 
 #include "browser-client.hpp"
+#include <array>
+#include <cstdlib>
+#ifdef __linux__
+#include <GL/gl.h>
+#endif
 #include "obs-browser-source.hpp"
 #include "base64/base64.hpp"
 #include <nlohmann/json.hpp>
@@ -39,6 +44,15 @@
 inline bool BrowserClient::valid() const
 {
 	return !!bs && !bs->destroying;
+}
+
+BrowserClient::~BrowserClient()
+{
+	if (quiet_console && (console_errors || console_fatals || console_warnings)) {
+		blog(LOG_INFO, "[obs-browser: '%s'] Console summary: warnings=%llu errors=%llu fatal=%llu",
+		     console_source_name.c_str(), (unsigned long long)console_warnings,
+		     (unsigned long long)console_errors, (unsigned long long)console_fatals);
+	}
 }
 
 CefRefPtr<CefLoadHandler> BrowserClient::GetLoadHandler()
@@ -120,6 +134,11 @@ void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, Termination
 
 	blog(LOG_ERROR, "[obs-browser: '%s'] Webpage has crashed unexpectedly! Reason: '%s'", sourceName,
 	     str_text.c_str());
+#ifdef __linux__
+	if (bs->gpu_active) {
+		bs->RequestCPUFallback("renderer process terminated");
+	}
+#endif
 }
 
 CefResourceRequestHandler::ReturnValue BrowserClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
@@ -363,6 +382,9 @@ void BrowserClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const 
 		gs_texture_set_image(bs->texture, (const uint8_t *)buffer, width * 4, false);
 		obs_leave_graphics();
 	}
+#ifdef __linux__
+	++bs->cpu_frames;
+#endif
 }
 
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
@@ -413,37 +435,94 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 	}
 
 #if !defined(_WIN32) && !defined(__APPLE__)
-	if (info.plane_count == 0) {
+	if (!sharing_available || bs->force_cpu) {
 		return;
 	}
-
-	struct obs_cef_video_format format = obs_cef_format_from_cef_type(info.format);
-	uint64_t modifier = info.modifier;
-
+#ifdef OBS_BROWSER_TEST_HOOKS
+	if (const char *failure = std::getenv("OBS_BROWSER_TEST_GPU_FAILURE")) {
+		if (strcmp(failure, "import") == 0) {
+			bs->RequestCPUFallback("injected import failure");
+			return;
+		}
+		if (strcmp(failure, "timeout") == 0) {
+			return;
+		}
+	}
+#endif
+	if (info.plane_count <= 0 || info.plane_count > kAcceleratedPaintMaxPlanes ||
+	    info.extra.coded_size.width <= 0 || info.extra.coded_size.height <= 0) {
+		bs->RequestCPUFallback("invalid DMA-BUF dimensions or plane count");
+		return;
+	}
+	const auto format = obs_cef_format_from_cef_type(info.format);
 	if (format.gs_format == GS_UNKNOWN) {
+		bs->RequestCPUFallback("unsupported DMA-BUF pixel format");
 		return;
 	}
-
-	uint32_t *strides = (uint32_t *)alloca(info.plane_count * sizeof(uint32_t));
-	uint32_t *offsets = (uint32_t *)alloca(info.plane_count * sizeof(uint32_t));
-	uint64_t *modifiers = (uint64_t *)alloca(info.plane_count * sizeof(uint64_t));
-	int *fds = (int *)alloca(info.plane_count * sizeof(int));
-
-	/* NOTE: This a workaround under X11 where the modifier is always invalid where it can mean "no modifier" in
-	 * Chromium's code. */
-	if (obs_get_nix_platform() == OBS_NIX_PLATFORM_X11_EGL && modifier == DRM_FORMAT_MOD_INVALID) {
-		modifier = DRM_FORMAT_MOD_LINEAR;
+	std::array<uint32_t, kAcceleratedPaintMaxPlanes> strides{}, offsets{};
+	std::array<uint64_t, kAcceleratedPaintMaxPlanes> modifiers{};
+	std::array<int, kAcceleratedPaintMaxPlanes> fds{};
+	for (int i = 0; i < info.plane_count; ++i) {
+		const auto &plane = info.planes[i];
+		if (plane.fd < 0 || plane.stride == 0) {
+			bs->RequestCPUFallback("invalid DMA-BUF plane");
+			return;
+		}
+		strides[i] = plane.stride;
+		offsets[i] = plane.offset;
+		fds[i] = plane.fd;
+		modifiers[i] = info.modifier;
 	}
-
-	for (size_t i = 0; i < kAcceleratedPaintMaxPlanes; i++) {
-		auto *plane = &info.planes[i];
-
-		strides[i] = plane->stride;
-		offsets[i] = plane->offset;
-		fds[i] = plane->fd;
-
-		modifiers[i] = modifier;
+	// CEF owns the fds; INVALID means implicit modifier, not LINEAR.
+	obs_enter_graphics();
+	auto *imported = gs_texture_create_from_dmabuf(
+		info.extra.coded_size.width, info.extra.coded_size.height, format.drm_format, format.gs_format,
+		info.plane_count, fds.data(), strides.data(), offsets.data(),
+		info.modifier == DRM_FORMAT_MOD_INVALID ? nullptr : modifiers.data());
+	if (!imported) {
+		obs_leave_graphics();
+		bs->RequestCPUFallback("EGL DMA-BUF import failed");
+		return;
 	}
+	const auto &visible = info.extra.visible_rect;
+	const uint32_t coded_cx = gs_texture_get_width(imported), coded_cy = gs_texture_get_height(imported);
+	if (visible.x < 0 || visible.y < 0 || visible.width <= 0 || visible.height <= 0 ||
+	    uint64_t(visible.x) + visible.width > coded_cx || uint64_t(visible.y) + visible.height > coded_cy) {
+		gs_texture_destroy(imported);
+		obs_leave_graphics();
+		bs->RequestCPUFallback("invalid DMA-BUF visible rectangle");
+		return;
+	}
+	const uint32_t cx = visible.width, cy = visible.height;
+	if (bs->texture && (gs_texture_get_width(bs->texture) != cx || gs_texture_get_height(bs->texture) != cy ||
+			    gs_texture_get_color_format(bs->texture) != format.gs_format)) {
+		bs->DestroyTextures();
+	}
+	if (!bs->texture) {
+		bs->texture = gs_texture_create(cx, cy, format.gs_format, 1, nullptr, 0);
+	}
+	bool copied = false;
+	if (bs->texture) {
+		gs_copy_texture_region(bs->texture, 0, 0, imported, visible.x, visible.y, cx, cy);
+		// Complete the copy before CEF reuses the buffer; glFlush is insufficient.
+		glFinish();
+		copied = glGetError() == GL_NO_ERROR;
+		if (copied) {
+			UpdateExtraTexture();
+		}
+	}
+	gs_texture_destroy(imported);
+	obs_leave_graphics();
+	if (!copied) {
+		bs->RequestCPUFallback("GPU texture allocation or copy failed");
+	} else if (!bs->gpu_frame_received.exchange(true)) {
+		blog(LOG_INFO, "[obs-browser]: Source '%s': accelerated DMA-BUF frame %ux%u, modifier 0x%llx",
+		     obs_source_get_name(bs->source), cx, cy, (unsigned long long)info.modifier);
+	}
+	if (copied) {
+		++bs->gpu_frames;
+	}
+	return;
 #endif
 
 #if !defined(_WIN32) && CHROME_VERSION_BUILD < 6367
@@ -478,10 +557,6 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 
 #elif defined(_WIN32)
 	bs->texture = gs_texture_open_shared((uint32_t)(uintptr_t)shared_handle);
-#else
-	bs->texture = gs_texture_create_from_dmabuf(info.extra.coded_size.width, info.extra.coded_size.height,
-						    format.drm_format, format.gs_format, info.plane_count, fds, strides,
-						    offsets, modifier != DRM_FORMAT_MOD_INVALID ? modifiers : NULL);
 #endif
 	UpdateExtraTexture();
 	obs_leave_graphics();
@@ -691,12 +766,17 @@ bool BrowserClient::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t l
 	int errorLevel = LOG_INFO;
 	const char *code = "Info";
 	switch (level) {
+	case LOGSEVERITY_WARNING:
+		++console_warnings;
+		return false;
 	case LOGSEVERITY_ERROR:
-		errorLevel = LOG_WARNING;
+		++console_errors;
+		errorLevel = quiet_console ? LOG_DEBUG : LOG_WARNING;
 		code = "Error";
 		break;
 	case LOGSEVERITY_FATAL:
-		errorLevel = LOG_ERROR;
+		++console_fatals;
+		errorLevel = quiet_console ? LOG_INFO : LOG_ERROR;
 		code = "Fatal";
 		break;
 	default:

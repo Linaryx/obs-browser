@@ -17,6 +17,10 @@
  ******************************************************************************/
 
 #include "browser-app.hpp"
+#include <cstdlib>
+#ifdef __linux__
+#include "linux-gpu-policy.hpp"
+#endif
 #include "browser-version.h"
 #include <nlohmann/json.hpp>
 
@@ -166,6 +170,28 @@ void BrowserApp::OnBeforeCommandLineProcessing(const CefString &, CefRefPtr<CefC
 	command_line->AppendSwitch("disable-extensions");
 	command_line->AppendSwitchWithValue("disable-features", disableFeatures);
 	command_line->AppendSwitch("hide-crash-restore-bubble");
+	if (const char *proxy = std::getenv("OBS_BROWSER_PROXY"); proxy && *proxy) {
+		command_line->AppendSwitchWithValue("proxy-server", proxy);
+	}
+#ifdef __linux__
+	const auto gpu_mode = ParseLinuxBrowserGPU(std::getenv("OBS_BROWSER_GPU"));
+	if (gpu_mode == LinuxBrowserGPU::Software) {
+		command_line->AppendSwitch("disable-gpu");
+	}
+	// gl-egl crashes on some NVIDIA/XWayland setups; leave backend selection opt-in.
+	if (gpu_mode == LinuxBrowserGPU::NVIDIA) {
+		const char *backend = std::getenv("OBS_BROWSER_ANGLE");
+		if (!backend || !*backend) {
+			backend = "auto";
+		}
+		if (std::string_view(backend) != "auto" && !command_line->HasSwitch("use-angle")) {
+			command_line->AppendSwitchWithValue("use-angle", backend);
+			if (!command_line->HasSwitch("use-gl")) {
+				command_line->AppendSwitchWithValue("use-gl", "angle");
+			}
+		}
+	}
+#endif
 #ifdef __APPLE__
 	command_line->AppendSwitch("use-mock-keychain");
 #elif !defined(_WIN32)

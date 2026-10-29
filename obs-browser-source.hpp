@@ -46,7 +46,16 @@ struct BrowserSource {
 	obs_source_t *source = nullptr;
 
 	bool tex_sharing_avail = false;
-	bool create_browser = false;
+#ifdef __linux__
+	std::atomic<bool> force_cpu{false};
+	std::atomic<bool> gpu_active{false};
+	std::atomic<bool> gpu_frame_received{false};
+	std::atomic<bool> fallback_requested{false};
+	std::atomic<uint64_t> gpu_started_ns{0};
+	std::atomic<uint64_t> gpu_frames{0}, cpu_frames{0};
+	void RequestCPUFallback(const char *reason);
+#endif
+	std::atomic<bool> create_browser{false};
 	std::recursive_mutex lockBrowser;
 	CefRefPtr<CefBrowser> cefBrowser;
 
@@ -125,6 +134,9 @@ struct BrowserSource {
 	void SetShowing(bool showing);
 	void SetActive(bool active);
 	void Refresh();
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	void Inspect();
+#endif
 
 #if defined(BROWSER_EXTERNAL_BEGIN_FRAME_ENABLED) && defined(ENABLE_BROWSER_SHARED_TEXTURE)
 	inline void SignalBeginFrame();

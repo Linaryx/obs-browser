@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.28...3.30)
 
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(obs-browser-nvidia VERSION 2.27.5 LANGUAGES C CXX)
+  include(cmake/standalone.cmake)
+endif()
+
 option(ENABLE_BROWSER "Enable browser source plugin (required Chromium Embedded Framework)" OFF)
 
 if(NOT ENABLE_BROWSER)
@@ -14,6 +19,11 @@ find_package(nlohmann_json 3.11 REQUIRED)
 
 add_library(obs-browser MODULE)
 add_library(OBS::browser ALIAS obs-browser)
+
+option(OBS_BROWSER_ENABLE_DEVTOOLS "Experimental source Inspect button (CEF 128+; off by default)" OFF)
+if(OBS_BROWSER_ENABLE_DEVTOOLS)
+  target_compile_definitions(obs-browser PRIVATE OBS_BROWSER_ENABLE_DEVTOOLS)
+endif()
 
 option(ENABLE_BROWSER_PANELS "Enable Qt web browser panel support" ON)
 mark_as_advanced(ENABLE_BROWSER_PANELS)
@@ -61,3 +71,20 @@ if(ENABLE_BROWSER_PANELS)
 endif()
 
 set_target_properties_obs(obs-browser PROPERTIES FOLDER plugins/obs-browser PREFIX "")
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  option(OBS_BROWSER_BUILD_TESTS "Build isolated libobs hardware test host and failure injection" OFF)
+  if(OBS_BROWSER_BUILD_TESTS)
+    enable_testing()
+    add_executable(gpu-policy-test tests/gpu-policy.cpp)
+    target_include_directories(gpu-policy-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_features(gpu-policy-test PRIVATE cxx_std_20)
+    add_test(NAME gpu-policy COMMAND gpu-policy-test)
+    target_compile_definitions(obs-browser PRIVATE OBS_BROWSER_TEST_HOOKS)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(Wayland REQUIRED IMPORTED_TARGET wayland-client)
+    add_executable(browser-test-host tests/host.cpp)
+    target_compile_features(browser-test-host PRIVATE cxx_std_20)
+    target_link_libraries(browser-test-host PRIVATE OBS::libobs Qt::Widgets X11::X11 PkgConfig::Wayland)
+  endif()
+endif()

@@ -1,10 +1,11 @@
 find_package(X11 REQUIRED)
 find_package(Libdrm REQUIRED)
+find_package(OpenGL REQUIRED COMPONENTS OpenGL)
 get_target_property(libdrm_include_directories Libdrm::Libdrm INTERFACE_INCLUDE_DIRECTORIES)
 
 target_include_directories(obs-browser PRIVATE ${libdrm_include_directories})
 
-target_link_libraries(obs-browser PRIVATE CEF::Wrapper CEF::Library X11::X11)
+target_link_libraries(obs-browser PRIVATE CEF::Wrapper CEF::Library X11::X11 OpenGL::OpenGL)
 set_target_properties(obs-browser PROPERTIES BUILD_RPATH "$ORIGIN/" INSTALL_RPATH "$ORIGIN/")
 
 target_sources(obs-browser PRIVATE drm-format.cpp drm-format.hpp)
@@ -17,7 +18,7 @@ target_sources(
                          browser-app.cpp browser-app.hpp browser-dummy-client.cpp browser-dummy-client.hpp
                          cef-headers.hpp obs-browser-page/obs-browser-page-main.cpp)
 
-target_include_directories(browser-helper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/deps"
+target_include_directories(browser-helper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/deps"
                                                   "${CMAKE_CURRENT_SOURCE_DIR}/obs-browser-page")
 
 target_compile_features(browser-helper PRIVATE cxx_std_20)

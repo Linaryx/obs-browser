@@ -16,6 +16,15 @@
 /debug32/
 /debug64/
 /builds/
+/stage/
+/test-results/
+/audit-cache/
+/tests/__pycache__/
+__pycache__/
+/packaging/aur/src/
+/packaging/aur/pkg/
+/packaging/aur/build/
+/packaging/aur/*.pkg.tar.*
 *.o.d
 *.ninja
 .ninja*

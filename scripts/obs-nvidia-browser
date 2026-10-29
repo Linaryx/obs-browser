@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Module mount overlay, not a security sandbox.
+set -euo pipefail
+runtime=${OBS_BROWSER_RUNTIME_ROOT:-/usr/lib/obs-browser-nvidia}
+data=${OBS_BROWSER_DATA_ROOT:-/usr/share/obs/obs-plugins/obs-browser}
+core=/usr/lib/obs-modules/core
+coredata=/usr/share/obs/obs-modules/core/obs-browser
+if [[ ! -f $core/obs-browser.so ]]; then
+  echo 'This launcher currently requires the Arch OBS 33 core module layout.' >&2
+  exit 1
+fi
+[[ -f $runtime/obs-browser.so && -d $data ]] || { echo 'Missing experimental runtime/data' >&2; exit 1; }
+work=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/obs-browser-nvidia.XXXXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+overlay=$work/core
+original=$work/original
+mkdir "$overlay" "$original"
+for entry in "$core"/*; do
+  ln -s "$original/${entry##*/}" "$overlay/${entry##*/}"
+done
+for entry in "$runtime"/*; do
+  ln -sfn "$entry" "$overlay/${entry##*/}"
+done
+export OBS_BROWSER_GPU=${OBS_BROWSER_GPU:-nvidia}
+# Custom docks require XWayland.
+export QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-xcb}
+# Avoid concurrent GTK/GLib dispatch by Qt and CEF during initialization.
+export QT_NO_GLIB=${QT_NO_GLIB:-1}
+bwrap --die-with-parent --bind / / --dev-bind /dev /dev \
+  --ro-bind "$core" "$original" \
+  --ro-bind "$overlay" "$core" \
+  --ro-bind "$data" "$coredata" \
+  obs "$@"

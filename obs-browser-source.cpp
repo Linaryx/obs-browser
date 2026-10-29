@@ -17,6 +17,7 @@
  ******************************************************************************/
 
 #include "obs-browser-source.hpp"
+#include <util/platform.h>
 #include "browser-client.hpp"
 #include "browser-scheme.hpp"
 #include "wide-string.hpp"
@@ -100,6 +101,21 @@ BrowserSource::BrowserSource(obs_data_t *, obs_source_t *source_) : source(sourc
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void javascript_event(string eventName, string jsonString)", jsEventFunction,
 			 (void *)this);
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	proc_handler_add(
+		ph, "void inspect()", [](void *p, calldata_t *) { static_cast<BrowserSource *>(p)->Inspect(); }, this);
+#endif
+#ifdef __linux__
+	proc_handler_add(
+		ph, "void browser_render_stats(out int gpu_frames, out int cpu_frames, out bool cpu_fallback)",
+		[](void *p, calldata_t *data) {
+			auto *bs = static_cast<BrowserSource *>(p);
+			calldata_set_int(data, "gpu_frames", bs->gpu_frames.load());
+			calldata_set_int(data, "cpu_frames", bs->cpu_frames.load());
+			calldata_set_bool(data, "cpu_fallback", bs->force_cpu.load());
+		},
+		this);
+#endif
 
 	/* defer update */
 	obs_source_update(source, nullptr);
@@ -120,6 +136,11 @@ static void ActuallyCloseBrowser(CefRefPtr<CefBrowser> cefBrowser)
 	if (bc) {
 		bc->bs = nullptr;
 	}
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	if (cefBrowser->GetHost()->HasDevTools()) {
+		cefBrowser->GetHost()->CloseDevTools();
+	}
+#endif
 
 	/*
          * This stops rendering
@@ -203,8 +224,12 @@ bool BrowserSource::CreateBrowser()
 		bool hwaccel = false;
 #endif
 
+		bool use_shared_texture = hwaccel && tex_sharing_avail;
+#ifdef __linux__
+		use_shared_texture = use_shared_texture && !force_cpu.load();
+#endif
 		CefRefPtr<BrowserClient> browserClient =
-			new BrowserClient(this, hwaccel && tex_sharing_avail, reroute_audio, webpage_control_level);
+			new BrowserClient(this, use_shared_texture, reroute_audio, webpage_control_level);
 
 		CefWindowInfo windowInfo;
 		windowInfo.bounds.width = width;
@@ -212,7 +237,12 @@ bool BrowserSource::CreateBrowser()
 		windowInfo.windowless_rendering_enabled = true;
 
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
-		windowInfo.shared_texture_enabled = hwaccel;
+		windowInfo.shared_texture_enabled = use_shared_texture;
+#ifdef __linux__
+		gpu_frame_received = false;
+		gpu_started_ns = os_gettime_ns();
+		gpu_active = windowInfo.shared_texture_enabled;
+#endif
 #endif
 
 		CefBrowserSettings cefBrowserSettings;
@@ -242,6 +272,14 @@ bool BrowserSource::CreateBrowser()
 								 CefRefPtr<CefDictionaryValue>(), nullptr);
 
 		SetBrowser(browser);
+		if (!browser) {
+#ifdef __linux__
+			if (gpu_active)
+				RequestCPUFallback("CreateBrowserSync failed");
+#endif
+			blog(LOG_ERROR, "[obs-browser]: Could not create browser source");
+			return;
+		}
 
 		if (reroute_audio)
 			cefBrowser->GetHost()->SetAudioMuted(true);
@@ -438,6 +476,35 @@ void BrowserSource::Refresh()
 	ExecuteOnBrowser([](CefRefPtr<CefBrowser> cefBrowser) { cefBrowser->ReloadIgnoreCache(); }, true);
 }
 
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+// Keep source CSS and menu handlers out of DevTools.
+class SourceDevToolsClient : public CefClient, public CefLifeSpanHandler {
+public:
+	CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+	void OnAfterCreated(CefRefPtr<CefBrowser>) override
+	{
+		blog(LOG_INFO, "[obs-browser]: Source DevTools window created");
+	}
+	void OnBeforeClose(CefRefPtr<CefBrowser>) override
+	{
+		blog(LOG_INFO, "[obs-browser]: Source DevTools window closed");
+	}
+	IMPLEMENT_REFCOUNTING(SourceDevToolsClient);
+};
+
+void BrowserSource::Inspect()
+{
+	ExecuteOnBrowser(
+		[](CefRefPtr<CefBrowser> browser) {
+			CefWindowInfo info;
+			info.bounds = CefRect(0, 0, 900, 700);
+			browser->GetHost()->ShowDevTools(info, new SourceDevToolsClient(), CefBrowserSettings(),
+							 CefPoint());
+		},
+		true);
+}
+#endif
+
 void BrowserSource::SetBrowser(CefRefPtr<CefBrowser> b)
 {
 	std::lock_guard<std::recursive_mutex> auto_lock(lockBrowser);
@@ -564,11 +631,49 @@ void BrowserSource::Update(obs_data_t *settings)
 	first_update = false;
 }
 
+#ifdef __linux__
+void BrowserSource::RequestCPUFallback(const char *reason)
+{
+	if (!force_cpu.exchange(true)) {
+		blog(LOG_WARNING, "[obs-browser]: Source '%s': CPU paint fallback (%s); browser will reload",
+		     obs_source_get_name(source), reason);
+		fallback_requested = true;
+	}
+}
+#endif
+
 void BrowserSource::Tick()
 {
 	if (os_event_try(cef_started_event) != 0) {
 		return;
 	}
+#ifdef __linux__
+	// Static pages may stop repainting after the first frame.
+	if (gpu_active && !gpu_frame_received) {
+		if (!obs_source_showing(source)) {
+			gpu_started_ns = os_gettime_ns();
+		} else if (os_gettime_ns() - gpu_started_ns.load() > 15000000000ULL) {
+			RequestCPUFallback("no accelerated paint within 15 seconds");
+		}
+	}
+	if (fallback_requested.exchange(false)) {
+		gpu_active = false;
+		// Close and destroy textures on the CEF thread before queuing CPU creation.
+		QueueCEFTask([this]() {
+			if (destroying) {
+				return;
+			}
+			if (auto browser = GetBrowser()) {
+				ActuallyCloseBrowser(browser);
+			}
+			SetBrowser(nullptr);
+			DestroyTextures();
+			if (!shutdown_on_invisible || obs_source_showing(source)) {
+				create_browser = true;
+			}
+		});
+	}
+#endif
 
 	if (create_browser && CreateBrowser()) {
 		create_browser = false;
