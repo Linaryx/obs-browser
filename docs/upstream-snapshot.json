@@ -1,0 +1,489 @@
+{
+  "generated_at": "2026-10-29T20:07:21.856256+00:00",
+  "cache_mode": "reuse",
+  "pulls": [
+    {
+      "number": 4238,
+      "title": "Prefer native-handle SharedImages for shared-texture OSR.",
+      "html_url": "https://github.com/chromiumembedded/cef/pull/4238",
+      "state": "closed",
+      "merged": true,
+      "merged_at": "2026-10-09T18:14:43Z",
+      "merge_commit_sha": "c5b06184bdf407fabf18bf93dee48af3461e1b38",
+      "updated_at": "2026-10-09T22:39:46Z",
+      "changed_files": 1,
+      "repo": "chromiumembedded/cef",
+      "head_sha": "cafbf7f24971aa2526381e8e1978e11d1838ae64",
+      "base_sha": "1ba412df217ca2afe1100cfefd407e0751e00c3c",
+      "fetched_at": "2026-10-29T19:31:46.712632+00:00",
+      "commits": [
+        {
+          "sha": "cafbf7f24971aa2526381e8e1978e11d1838ae64",
+          "subject": "Prefer native-handle SharedImages for Linux shared-texture OSR\n\nAvoid linear CPU-mappable GBM allocations for Linux shared-texture OSR, allowing GPU rendering on NVIDIA. Retain the mappable SharedImage preference on other platforms.\n\nRequires a Chromium version containing https://crrev.com/c/8220427."
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 3954,
+      "title": "Force use-angle=gl-egl and ozone-platform=X11 for Linux OSR shared texture mode",
+      "html_url": "https://github.com/chromiumembedded/cef/pull/3954",
+      "state": "closed",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "bba18e41e15ecebbfec9f74d0f1d0eaec5b6c662",
+      "updated_at": "2025-06-27T18:04:47Z",
+      "changed_files": 3,
+      "repo": "chromiumembedded/cef",
+      "head_sha": "ef46ee413b859489b41da160a8427450506351ab",
+      "base_sha": "2a4a300c05302c3537bb2e7ca5f887d16896d27c",
+      "fetched_at": "2026-10-29T19:31:47.359949+00:00",
+      "commits": [
+        {
+          "sha": "0b814ab8c1d43c6615c570e8fc7fae57cc6108d6",
+          "subject": "Force use-angle=gl-egl for Linux OSR shared texture mode\n\nWhen off screen rendering (OSR) and shared texture mode are both enabled\non Linux, DMABUF based rendering requires ANGLE's EGL backend (use-angle=gl-egl)\nto work correctly.\n\nWithout this switch, Chromium falls back to the pixmap codepath, which only works on\nsome Mesa drivers (e.g., Intel and AMD). To support broader compatibility including NVIDIA\nwe explicitly set use-angle=gl-egl. We have verified that this works\ncorrectly on both NVIDIA GPUs (latest drivers 565+) and AMD.\n\nFixes #3953"
+        },
+        {
+          "sha": "ef46ee413b859489b41da160a8427450506351ab",
+          "subject": "Append the ozone-platform=x11 switch in shared texture offscreen\nrendering mode to avoid crashes in certain Wayland environments (Wayland\nAMD for e.g.)"
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 4233,
+      "title": "linux: Add support for embedded Ozone/Wayland windows",
+      "html_url": "https://github.com/chromiumembedded/cef/pull/4233",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "updated_at": "2026-10-26T10:13:03Z",
+      "changed_files": 18,
+      "repo": "chromiumembedded/cef",
+      "head_sha": "9a1186d148d32abb2eb629f9290f276069875a0d",
+      "base_sha": "7f8a5ec28e932aa62b583c8248e3df2e4dfe4807",
+      "fetched_at": "2026-10-29T19:31:48.215001+00:00",
+      "commits": [
+        {
+          "sha": "29260e65450ecb4f32c13bee898dc9f9a0125092",
+          "subject": "chromium: Add Wayland subsurface embedding to Ozone (see #2804)\n\nAdds the Chromium-side half of hosting a browser inside a wl_surface owned by\nanother application. Carried as a patch because none of it can live in CEF.\n\nA wl_surface is a protocol object scoped to one wl_display, and\nwl_subcompositor_get_subsurface() rejects surfaces from another connection, so\nWaylandConnection has to adopt the embedder's display rather than call\nwl_display_connect(). Chromium already routes its own traffic through a\ndedicated wl_event_queue, so the two event loops coexist without further work.\n\nWaylandEmbeddedWindow is a WaylandWindow attached as a wl_subsurface of a bare\nwl_surface with no WaylandWindow behind it. It registers with\nWaylandWindowManager like any other window, which is what makes accelerated\nwidget lookup resolve -- and is precisely what used to crash when the X11 path\nran under Ozone/Wayland.\n\nInput is split by class. RootWindowFromWlSurface() resolves only Chromium's own\nsurfaces and now returns null for anything else, because pointer, touch, tablet\nand drag events on the embedder's surface arrive in that application's\ncoordinate space and belong to it. Only the keyboard and text input cross over,\nthrough KeyboardWindowFromWlSurface(), since wl_keyboard.enter is delivered to\nthe embedder's toplevel and a wl_subsurface never receives it. That event fires\nonce and is not repeated, so Activate() takes the stored focus over from a\nsibling, and a press inside an embedded window claims it -- the click-to-focus\npolicy a compositor applies to toplevels and that a subsurface is invisible to.\n\nPopups anchor on the embedder's xdg_surface, passed in by the host. There is no\nprotocol alternative: xdg_surface.get_popup requires an xdg_surface, and\nxdg_foreign rejects anything that is not an xdg_toplevel equivalent. Where the\nembedder exposes none, a menu falls back to a wl_subsurface, which cannot leave\nthe host window or hold a grab but does render -- failing instead is not an\noption, because views destroys the widget inside Widget::Show() and CHECKs.\n\nThe lookup also closes a memory-safety hole: it used to read a wl_surface's\nuser data and cast it to ui::WaylandSurface, which on a shared connection is a\npointer owned by the embedder's toolkit.\n\nCovered by wayland_embedded_window_unittest.cc.\n\nAssisted-by: Claude Code"
+        },
+        {
+          "sha": "b0bffb2e73f2e736efc398ff58d338669799d437",
+          "subject": "linux: Add Wayland API and runtime platform selection (see #2804)\n\nEverything an embedder needs to name its Wayland objects, plus the runtime\ncheck that decides which Ozone platform is actually in use.\n\nThe parent surface is not a new field. cef_window_info_t::parent_window has\nalways been an opaque native parent handle whose meaning depends on the\nplatform -- an HWND on Windows, an NSView* on macOS -- so under Ozone/Wayland\nit names a wl_surface. The unsigned long spelling on Linux is an artifact of\nX11 and holds a pointer on LP64, so existing embedders keep compiling and\nkeep working. The cost is that a mistaken XID cannot be told from a valid\naddress, which is documented rather than diagnosed.\n\nparent_xdg_surface is appended under CEF_API_ADDED(CEF_EXPERIMENTAL), with a\nthree-argument SetAsChild() overload. It may be null: toolkits differ in\nwhether they expose the xdg_surface at all, and refusing to create the browser\nwould put embedding out of reach for those hosts.\n\nAppending is only half of ABI safety, so the copy is guarded by\nCEF_MEMBER_EXISTS: |size| is the only thing that distinguishes a smaller\nstruct at runtime, and reading the member without checking it reads past the\nend of an older application's allocation. The else branch matters as much --\nCefStructBase::Set() calls Clear() to \"clear newer members that won't be set\",\nbut clear() only frees string members, so a stale pointer would otherwise\nsurvive being assigned over.\n\nThe connection is passed process-wide through cef_set_wayland_display() rather\nthan per browser, because Chromium builds its WaylandConnection while\ninitializing Ozone, inside CefInitialize and long before any CefWindowInfo\nexists. The 2020 Igalia prototype put it on CefWindowInfo, which cannot work\nfor that reason.\n\nCefBrowserHost::SetWindowBounds() lets the host reposition an embedded browser,\nwhich it must: a wl_subsurface receives no configure events, so layout can only\ncome from outside. It is declared last in the class because the translator\nmoves versioned members to the end of the generated struct in declaration\norder, and putting it earlier would shift the existing experimental\nset_ax_viewport_collapse.\n\ncef_ozone::IsWayland()/IsX11() read the platform Ozone actually selected. A\nsingle libcef is built with both compiled in, so BUILDFLAG(SUPPORTS_OZONE_X11)\nonly says the code exists, not that it is usable.\n\nCovered by window_info_linux_unittest.cc.\n\nAssisted-by: Claude Code"
+        },
+        {
+          "sha": "3392f33c07b812aaf7d694ad8d141cdbb4e7f241",
+          "subject": "linux: Create windowed browsers on Wayland (see #2804)\n\nCreateHostWindow() used to select CefWindowX11 on BUILDFLAG(SUPPORTS_OZONE_X11)\nalone. Release binaries compile in both Ozone platforms, so that path also ran\nunder Ozone/Wayland and produced a stray XWayland window, or nothing at all\nfollowed by a crash in WaylandWindowManager on the first event dispatch. The\nX11 code is now behind cef_ozone::IsX11(), unchanged, and an unsupported\nplatform fails with a message instead of returning true having created nothing.\n\nThe Wayland path registers the client's wl_surface with Ozone, which hands back\na gfx::AcceleratedWidget. That widget is the only vocabulary views has for a\nnative parent -- it travels through Widget::InitParams::parent_widget -- and\nWaylandWindow::Create() resolves it back into the surface. No CEF-side\ncounterpart of CefWindowX11 is needed: that class exists because\nDesktopWindowTreeHostLinux cannot be reparented into a foreign X11 window,\nwhereas here the embedded window is the platform window itself.\n\nClosing had to be driven explicitly. Widget::Close() ends in a callback that\nonly clears the pointer; the three existing platforms complete the teardown by\ncalling AlloyBrowserHostImpl::WindowDestroyed() from their own window\ndestruction, and Wayland has nothing equivalent to hang that on. Without it\nDestroyBrowser() never ran, OnBeforeClose never fired, and CefShutdown() went\non to destroy WaylandConnection underneath a live browser.\n\nSetFocus() now drives both directions. Under X11 the window manager takes focus\naway by itself, so blur never needed work here; an embedded browser has no\nwindow the compositor knows about, and a host with two browsers could otherwise\nask for focus but never give it up.\n\nValidation happens before host_window_created_ and the AddRef(), since\nBrowserDestroyed() -- which undoes both -- is not called for a browser that\nnever finished being created.\n\nAssisted-by: Claude Code"
+        },
+        {
+          "sha": "8f926f4221b589d11b40923a17a322a5ae537ffd",
+          "subject": "linux: Add a Wayland embedding sample (see #2804)\n\ncefclient's Linux windowing path is GTK over X11 and hands CEF an XID, so\nthere was no sample exercising native windowed mode on Wayland at all. This\none opens a wl_display, hands it to CEF before CefInitialize, creates an\nxdg_toplevel, paints a plain host UI into it with wl_shm, and embeds a browser\nas a subsurface of that surface -- all from one thread.\n\nThe content rectangle is painted in a deliberately loud colour first, so a\nbrowser that fails to appear leaves a visible hole rather than failing\nsilently.\n\nTwo details are the point rather than incidental. It drives both event loops\nfrom one thread with wl_display_prepare_read/read_events and a poll timeout,\nwhich is the canonical way to share a connection between two dispatchers. And\nit selects --ozone-platform=wayland on the command line rather than through\nCefSettings, because subprocesses inherit argv and have to agree with the\nbrowser process; without it Ozone picks X11 wherever DISPLAY is set and reads\nthe wl_surface in parent_window as an X11 Window.\n\nGNOME does not advertise zxdg_decoration_manager_v1, so the client draws its\nown decorations and drives moving and resizing itself.\n\nAssisted-by: Claude Code"
+        },
+        {
+          "sha": "9a1186d148d32abb2eb629f9290f276069875a0d",
+          "subject": "docs: Add design notes for Wayland embedding (see #2804)\n\nRecords why the design is shaped the way it is, so the next person does not\nrediscover it: that a wl_surface cannot cross a connection and everything else\nfollows from that, why the connection is process-wide rather than per browser,\nwhy popups borrow the embedder's xdg_surface when no protocol allows anchoring\nto a subsurface, and what an embedder has to do differently from X11.\n\nAlso records what is not done. IME routing exists but nothing past it has been\nexercised -- preedit, dead keys, CJK composition, and where a candidate window\nlands when the window it belongs to is a subsurface. Drag and drop and HiDPI\nare untested. The resize lag is inherent: wl_subsurface.set_position is\ndouble-buffered on the parent surface, so a move only takes effect on the\nembedder's next commit, and WaylandBubble carries the same TODO upstream\n(crbug.com/329145822).\n\nAssisted-by: Claude Code"
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 531,
+      "title": "Fix browser source tearing with hardware acceleration",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/531",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "fc526cd21cfba8848e8b3bb02b5b670ccc51df61",
+      "updated_at": "2026-09-24T14:08:52Z",
+      "changed_files": 2,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "ab2c14dc284273e088eccc8cd394ecde2bc4ea23",
+      "base_sha": "a1624431ae60cd89560d3d12c8143b1b926b410a",
+      "fetched_at": "2026-10-29T19:31:49.525576+00:00",
+      "commits": [
+        {
+          "sha": "ab2c14dc284273e088eccc8cd394ecde2bc4ea23",
+          "subject": " Fix browser source tearing with hardware acceleration"
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 533,
+      "title": "Fix premultiplied sRGB browser rendering",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/533",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "updated_at": "2026-08-17T04:44:32Z",
+      "changed_files": 2,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "ecf1d9f42e5a8d52d5f70d599c8ec9c54df82a71",
+      "base_sha": "3f0a2cdf378939ebe3c6f9ab36d4ea100c25aac2",
+      "fetched_at": "2026-10-29T19:31:50.443301+00:00",
+      "commits": [
+        {
+          "sha": "fb1ba861f38e1711f839d832be11d0e69ba3d144",
+          "subject": "Fix premultiplied sRGB rendering\n\nUse the scene item's linear-sRGB state to select the appropriate draw\npath for the premultiplied browser texture.\n\nWhen linear compositing is active, decompress the texture and enable\nframebuffer sRGB. Draw it without conversion for nonlinear compositing."
+        },
+        {
+          "sha": "ecf1d9f42e5a8d52d5f70d599c8ec9c54df82a71",
+          "subject": "Use sRGB-off as initial blend method\n\nChromium composites content in nonlinear sRGB. Set\nOBS_SOURCE_INITIAL_BLEND_METHOD_SRGB_OFF so new browser items use\nnonlinear compositing and more closely match their appearance in\nChromium."
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 546,
+      "title": "Unblock hardware acceleration for Intel Arc GPUs",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/546",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "0e748173ddf834df4b72ec0ed8a781fe67f1b9fe",
+      "updated_at": "2026-10-27T00:01:04Z",
+      "changed_files": 1,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "bb8097aeb5403ff8ff5993cbe8c64fd1ef867240",
+      "base_sha": "9ecf652c9df4a0cace934917ce5ae754da58a529",
+      "fetched_at": "2026-10-29T19:31:51.533250+00:00",
+      "commits": [
+        {
+          "sha": "bb8097aeb5403ff8ff5993cbe8c64fd1ef867240",
+          "subject": "Unblock hardware acceleration for Intel Arc GPUs\n\nThe Intel entry in the blocklist here was intended for iGPUs because\nthey could not handle browser hardware acceleration. Intel Arc GPUs are\nperformant enough that they can run browser hardware acceleration. Do an\nadditional check for those so that they can take advantage of hardware\nacceleration.\n\nAs a trivial cleanup, unwrap this logged string."
+        }
+      ],
+      "reviews": [
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "Warchamp7"
+        }
+      ],
+      "missing": []
+    },
+    {
+      "number": 508,
+      "title": "panel: Propagate \"focus-in\" event to browser host",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/508",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "b78c880320efa3495c03fac61d4f03ff938dd6ed",
+      "updated_at": "2026-01-23T17:22:45Z",
+      "changed_files": 3,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "5b8529962847ff4649ef35b732d068402bcd7757",
+      "base_sha": "f5f64b1250192f3490df14fcda4c63a10d50646b",
+      "fetched_at": "2026-10-29T19:31:52.419241+00:00",
+      "commits": [
+        {
+          "sha": "5b8529962847ff4649ef35b732d068402bcd7757",
+          "subject": "panel: Propagate \"focus-in\" event to browser host\n\nThe CEF instance is wrapped in another QWindow instance for Windows\nand Linux and thus consumes any focus events that are propagated through\nthe application.\n\nTo ensure that a wrapped CEF instance regains focus after its wrapping\nwindow receives focus, the event needs to be explicitly sent to the\nbrowser host instance it wraps."
+        }
+      ],
+      "reviews": [
+        {
+          "state": "CHANGES_REQUESTED",
+          "body": "After some testing, I thought this had provided an improvement, however with or without this change, the Auth window for Twitch correctly focuses the Username input on initial open, and then does not if the window is unfocused and tabbed back in.\n\nI tested with CEF 136, so it's likely this fix works fine for 127 (I will have to test again later) but has no effect with the Chrome runtime on modern Chromium versions.",
+          "user": "WizardCM"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "PatTheMav"
+        }
+      ],
+      "missing": []
+    },
+    {
+      "number": 155,
+      "title": "obs-browser: flush panel cookie store on exit",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/155",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "updated_at": "2025-11-12T11:00:32Z",
+      "changed_files": 2,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "4c54fae69b1c4bb656a0ddc0028b7cf4383e32da",
+      "base_sha": "b22c82179953a90d30e7956b23a0dac9a0131f29",
+      "fetched_at": "2026-10-29T19:31:53.435014+00:00",
+      "commits": [
+        {
+          "sha": "4c54fae69b1c4bb656a0ddc0028b7cf4383e32da",
+          "subject": "obs-browser: flush panel cookie store on exit\n\nIf cookie store is not flushed, state might become inconsistent:\nreading from the cookies file will become impossible.\nNo errors will be returned, yet no information will be available,\nand no information will be stored: the cookie manager will appear to be\nempty at all times and the `Cookies` file modified date will not update\nmoving forward.\n\nThis will result, for example, in Twitch chat window re-opening for\nusers which connected their Twitch account, but not having the\n`auth-token` cookie available: once the user will try to send a\nmessage to the chat, they will be redirected to Twitch login screen."
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 554,
+      "title": "Initialize dock later to bypass startup crash",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/554",
+      "state": "closed",
+      "merged": true,
+      "merged_at": "2026-10-27T17:06:42Z",
+      "merge_commit_sha": "1cfae9e03bfbf7e303c0e89965dffb1596355b40",
+      "updated_at": "2026-10-27T17:06:42Z",
+      "changed_files": 1,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "38dd02c41630f7786bfdc7899ddd17d7799b9575",
+      "base_sha": "85c7f2668936679b43329a9ee9f1e269d9bac812",
+      "fetched_at": "2026-10-29T19:31:55.435401+00:00",
+      "commits": [
+        {
+          "sha": "38dd02c41630f7786bfdc7899ddd17d7799b9575",
+          "subject": "Initialize dock later to bypass startup crash\n\nDefers the scheduling of browser initialisation to the next iteration of\nthe Qt event loop to allow dock state restoration to finish before CEF\nwill attempt to attach its browser window to the dock's widget\nhierarchy.\n\nAttempting to initialize a browser immediately will lead to CEF crashing\nduring the same attempt on Windows, as the CEF event loop runs\nindependently and thus might interact with incomplete widget hierarchy."
+        }
+      ],
+      "reviews": [
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "PatTheMav"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "WizardCM"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "Warchamp7"
+        },
+        {
+          "state": "APPROVED",
+          "body": "",
+          "user": "Warchamp7"
+        },
+        {
+          "state": "APPROVED",
+          "body": "",
+          "user": "RytoEX"
+        }
+      ],
+      "missing": []
+    },
+    {
+      "number": 556,
+      "title": "Queue navigation in browser dock to fix deadlock",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/556",
+      "state": "closed",
+      "merged": true,
+      "merged_at": "2026-10-27T17:14:52Z",
+      "merge_commit_sha": "796246735c8a3d57ad1298b58b63d7f52200a12c",
+      "updated_at": "2026-10-27T17:14:52Z",
+      "changed_files": 1,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "eb056390d1bbec83a539e6d2889be9a91541bc2e",
+      "base_sha": "1cfae9e03bfbf7e303c0e89965dffb1596355b40",
+      "fetched_at": "2026-10-29T19:31:56.638870+00:00",
+      "commits": [
+        {
+          "sha": "eb056390d1bbec83a539e6d2889be9a91541bc2e",
+          "subject": "Queue navigation in browser dock to fix deadlock\n\nThe current YouTube dock implementation uses a `urlChanged` event as the\ntrigger to refresh the chat dock opportunistically, as authentication\ncookies might now be present and the chat dock could end up in a\n\"logged-in\" state.\n\nThis reload itself will trigger the `onBeforeBrowse` event handler\nhowever, which then attempts to acquire the global lock held by the\nouter `onBeforeBrowse` handler and thus deadlocks the application.\n\nDeferring the `urlChanged` event to the next iteration of the event loop\nallows `onBeforeBrowse` to finish to completion and release the lock."
+        }
+      ],
+      "reviews": [
+        {
+          "state": "APPROVED",
+          "body": "",
+          "user": "PatTheMav"
+        },
+        {
+          "state": "APPROVED",
+          "body": "",
+          "user": "RytoEX"
+        }
+      ],
+      "missing": []
+    },
+    {
+      "number": 558,
+      "title": "Resize panel container after context is created",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/558",
+      "state": "closed",
+      "merged": true,
+      "merged_at": "2026-10-28T19:50:13Z",
+      "merge_commit_sha": "be39477b1be8878a3cb0d834d1ec81cb41bde793",
+      "updated_at": "2026-10-28T19:50:13Z",
+      "changed_files": 2,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "e71644f6fa48753a9ff47d5ec7f02290b90af246",
+      "base_sha": "796246735c8a3d57ad1298b58b63d7f52200a12c",
+      "fetched_at": "2026-10-29T19:31:57.169583+00:00",
+      "commits": [
+        {
+          "sha": "e71644f6fa48753a9ff47d5ec7f02290b90af246",
+          "subject": "Resize panel container after context is created\n\nWork around a race condition where the call to Resize() could occur\nbefore the browser context existed, resulting in the default size 100x30\nuntil next manual resize of the parent window or dock.\n\nThe wrapper container and Resize() function are only used on non-macOS\nplatforms."
+        }
+      ],
+      "reviews": [
+        {
+          "state": "APPROVED",
+          "body": "",
+          "user": "Warchamp7"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "RytoEX"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "WizardCM"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "RytoEX"
+        },
+        {
+          "state": "APPROVED",
+          "body": "Fixed up the commit message. LGTM",
+          "user": "RytoEX"
+        }
+      ],
+      "missing": []
+    },
+    {
+      "number": 528,
+      "title": "Add Property Button to Inspect Sources",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/528",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "2dd57e8ae302f0b0d525ff513467160d8610b5c9",
+      "updated_at": "2026-10-06T12:07:09Z",
+      "changed_files": 3,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "1b2ae118a65b7fbc52466ca36eee555debe569ee",
+      "base_sha": "68af8e8a247f61147bf6f68e500fb09404e605d2",
+      "fetched_at": "2026-10-29T19:31:57.841181+00:00",
+      "commits": [
+        {
+          "sha": "1b2ae118a65b7fbc52466ca36eee555debe569ee",
+          "subject": "Add Property Button to Inspect Sources"
+        }
+      ],
+      "reviews": [
+        {
+          "state": "COMMENTED",
+          "body": "During my testing it seems like the inspect window is another avenue for OBS to potentially crash on shutdown due to race conditions between CEF and OBS itself (crash originates in `BrowserShutdown()`).\n\nIt's probably not an issue with this PR per-se, but it means we're adding _another_ avenue for people to potentially end up with unclean shutdowns.",
+          "user": "PatTheMav"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "PatTheMav"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "WizardCM"
+        },
+        {
+          "state": "COMMENTED",
+          "body": "",
+          "user": "PatTheMav"
+        },
+        {
+          "state": "APPROVED",
+          "body": "",
+          "user": "PatTheMav"
+        }
+      ],
+      "missing": []
+    },
+    {
+      "number": 530,
+      "title": "Add per-source camera and microphone permission",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/530",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "updated_at": "2026-07-28T20:17:37Z",
+      "changed_files": 6,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "130874ee37e5be04ae48fc469fa81f46c96761dc",
+      "base_sha": "3f0a2cdf378939ebe3c6f9ab36d4ea100c25aac2",
+      "fetched_at": "2026-10-29T19:31:58.473606+00:00",
+      "commits": [
+        {
+          "sha": "130874ee37e5be04ae48fc469fa81f46c96761dc",
+          "subject": "Add per-source camera and microphone permission\n\nCheckbox that allows browser source to capture camera of microphone\nsources. This has to be set per-source, while launch flags work globally.\nCEF permission handler is used to get per-source limitation.\nUsing --enable-media-stream flag still overrides this so compatibility\nremains."
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 440,
+      "title": "browser-client: Downgrade browser console log levels",
+      "html_url": "https://github.com/obsproject/obs-browser/pull/440",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "45f4609f123bdd88f5113328670f2b0a3f5457b0",
+      "updated_at": "2026-05-17T04:31:18Z",
+      "changed_files": 1,
+      "repo": "obsproject/obs-browser",
+      "head_sha": "17fb9455599a721d3ffc785b65c279ea10933e7e",
+      "base_sha": "b4f724ae6abd371f8f0378f29c908f51065190f3",
+      "fetched_at": "2026-10-29T19:32:00.043400+00:00",
+      "commits": [
+        {
+          "sha": "17fb9455599a721d3ffc785b65c279ea10933e7e",
+          "subject": "browser-client: Downgrade browser console log levels\n\nThroughout time, OBS has logged browser console.log errors as warnings\nin the OBS log as an easy way for browser source developers to\nfind and fix issues with their pages. Unfortunately, this functionality\nseems to be almost completely ignored by many browser source providers.\nThis logging does, however, clog up many OBS logs and result in\nreadability issues when troubleshooting unrelated problems."
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    },
+    {
+      "number": 13797,
+      "title": "libobs: Fix premultiplied sRGB source rendering",
+      "html_url": "https://github.com/obsproject/obs-studio/pull/13797",
+      "state": "closed",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": "d6e2045dd219cfe296393ad623e658b43d0315e9",
+      "updated_at": "2026-09-21T16:51:28Z",
+      "changed_files": 5,
+      "repo": "obsproject/obs-studio",
+      "head_sha": "a1c134e7ba4979458155d562de31e6c4f0099a13",
+      "base_sha": "1bf1379faa8b87dbb1cb75635e7880e7d9625b8c",
+      "fetched_at": "2026-10-29T19:32:01.069878+00:00",
+      "commits": [
+        {
+          "sha": "edcf0b5ed476c409ff95571e221959dc9cba72e8",
+          "subject": "libobs: Support premultiplied sRGB rendering\n\nAdd a default effect technique that converts premultiplied sRGB\ntextures to linear space.\n\nPropagate the scene item's linear-sRGB state while rendering into an\nintermediate texture so sources can select the appropriate draw path."
+        },
+        {
+          "sha": "472f3e15bccd9362334772c875e27527c9e677e2",
+          "subject": "libobs: Add initial sRGB-off blend method flag\n\nAdd a source flag that initializes new scene items with\nOBS_BLEND_METHOD_SRGB_OFF instead of OBS_BLEND_METHOD_DEFAULT. Browser\nsources require nonlinear compositing to preserve their appearance.\n\nBrowser rendering previously used a workaround that made the linear\nOBS_BLEND_METHOD_DEFAULT path resemble OBS_BLEND_METHOD_SRGB_OFF.\nExisting browser items using OBS_BLEND_METHOD_DEFAULT therefore expect\nthe nonlinear appearance.\n\nWhen loading older scene collections, migrate items belonging to\nopted-in sources from OBS_BLEND_METHOD_DEFAULT to\nOBS_BLEND_METHOD_SRGB_OFF. Leave all other blending methods unchanged."
+        },
+        {
+          "sha": "a1c134e7ba4979458155d562de31e6c4f0099a13",
+          "subject": "docs: Document initial nonlinear blend flag"
+        }
+      ],
+      "reviews": [],
+      "missing": []
+    }
+  ]
+}

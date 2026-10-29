@@ -1,5 +1,8 @@
 # obs-browser
 
+> Experimental NVIDIA/Linux branch: see [build, safety, fallback and test instructions](README-NVIDIA.md).
+> This is not an official OBS release. Upstream documentation follows unchanged.
+
 obs-browser introduces a cross-platform Browser Source, powered by CEF ([Chromium Embedded Framework](https://bitbucket.org/chromiumembedded/cef/src/master/README.md)), to OBS Studio. A Browser Source allows the user to integrate web-based overlays into their scenes, with complete access to modern web APIs.
 
 Additionally, obs-browser enables Service Integration (linking third party services) and Browser Docks (webpages loaded into the interface itself) on all supported platforms, except for Wayland (Linux).
