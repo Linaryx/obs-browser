@@ -7,7 +7,7 @@ arch=('x86_64')
 url='https://github.com/obsproject/obs-browser'
 license=('GPL-2.0-or-later' 'BSD-3-Clause')
 depends=('obs-studio>=33' 'qt6-base' 'libx11' 'libdrm' 'libglvnd' 'bubblewrap' 'wayland'
-         'alsa-lib' 'at-spi2-core' 'cairo' 'cups' 'dbus' 'expat' 'glib2' 'gtk3'
+         'alsa-lib' 'at-spi2-core' 'cairo' 'libcups' 'dbus' 'expat' 'glib2' 'gtk3'
          'libxcomposite' 'libxdamage' 'libxext' 'libxfixes' 'libxkbcommon'
          'libxrandr' 'mesa' 'nspr' 'nss' 'pango' 'systemd-libs')
 makedepends=('git' 'cmake' 'ninja' 'nlohmann-json')
