@@ -16,6 +16,8 @@ jobs:
       - name: Dependencies
         run: pacman -Syu --noconfirm git cmake ninja obs-studio qt6-base nlohmann-json simde xorg-server-xvfb libdrm libglvnd libx11 wayland curl python
       - uses: actions/checkout@v4
+      - name: Trust checkout owner
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/cache@v4
         with:
           path: /root/.cache/obs-browser-nvidia
