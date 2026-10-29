@@ -1,5 +1,5 @@
 pkgname=obs-browser-nvidia-git
-pkgver=2.27.5.r749.gd4db73e
+pkgver=2.27.5.r758.gd38ef44
 pkgrel=1
 pkgdesc='Experimental CEF 156 NVIDIA DMA-BUF browser sources for OBS (opt-in launcher)'
 arch=('x86_64')
