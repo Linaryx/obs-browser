@@ -1,4 +1,3 @@
-# Set _repo to your published GitHub fork before submitting to AUR.
 pkgname=obs-browser-nvidia-git
 pkgver=2.27.5.r749.gd4db73e
 pkgrel=1
@@ -12,9 +11,9 @@ depends=('obs-studio>=33' 'qt6-base' 'libx11' 'libdrm' 'libglvnd' 'bubblewrap' '
          'libxrandr' 'mesa' 'nspr' 'nss' 'pango' 'systemd-libs')
 makedepends=('git' 'cmake' 'ninja' 'nlohmann-json')
 options=('!strip')
-_repo=${OBS_BROWSER_FORK_URL:-}
+_repo=${OBS_BROWSER_FORK_URL:-https://github.com/Linaryx/obs-browser.git}
 _cef='cef_binary_156.0.14+g4fa4ab5+chromium-156.0.8078.48_linux64_minimal'
-source=("obs-browser::git+${_repo:-https://github.com/REPLACE-ME/obs-browser.git}#branch=experimental/nvidia-cef156"
+source=("obs-browser::git+${_repo}#branch=experimental/nvidia-cef156"
         "${_cef}.tar.bz2::https://cef-builds.spotifycdn.com/${_cef//+/%2B}.tar.bz2")
 sha256sums=('SKIP' '4191ac920a91a052eba04afb6ed830d47aed46a3e246c434a2f062c23588dc8a')
 
