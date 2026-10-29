@@ -19,19 +19,28 @@ parser.add_argument('--platform', choices=['wayland', 'xcb'], default='wayland')
 parser.add_argument('--name', default='frontend-wayland')
 parser.add_argument('--dock', action='store_true', help='Add a synthetic custom dock (XWayland only)')
 parser.add_argument('--gpu-mode', choices=['nvidia', 'cpu'], default='nvidia')
+parser.add_argument('--width', type=int, default=1280)
+parser.add_argument('--height', type=int, default=720)
+parser.add_argument('--fps', type=int, choices=[30, 60], default=60)
+parser.add_argument('--runtime', type=Path)
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 folder = root / 'test-results' / args.name
 folder.mkdir(parents=True, exist_ok=False)
 config = folder / 'xdg/obs-studio'
 (config / 'plugin_config/obs-websocket').mkdir(parents=True)
+profile = config / 'basic/profiles/gpu-audit'
+profile.mkdir(parents=True)
+(profile / 'basic.ini').write_text(
+    f'[General]\nName=GPU Audit\n\n[Video]\nBaseCX={args.width}\nBaseCY={args.height}\n'
+    f'OutputCX={args.width}\nOutputCY={args.height}\nFPSType=0\nFPSCommon={args.fps}\n')
 if args.dock and args.platform != 'xcb':
     parser.error('Native Wayland docks are unsupported by the pinned CEF SDK')
 dock_config = ''
 if args.dock:
     docks = [{'title': 'Audit Dock', 'url': (root / 'tests/dock-fixture.html').as_uri(), 'uuid': '4ade570ef0f84d2a877746dcd48a4e11'}]
     dock_config = 'ExtraBrowserDocks=' + json.dumps(docks) + '\n'
-(config / 'user.ini').write_text('[General]\nFirstRun=true\n\n[BasicWindow]\nWarnBeforeStartingStream=true\n' + dock_config)
+(config / 'user.ini').write_text('[General]\nFirstRun=true\n\n[Basic]\nProfile=GPU Audit\nProfileDir=gpu-audit\n\n[BasicWindow]\nWarnBeforeStartingStream=true\n' + dock_config)
 (config / 'global.ini').write_text('[General]\nLastVersion=553648128\nBrowserHWAccel=true\n')
 password = secrets.token_urlsafe(24)
 port = 4456
@@ -43,7 +52,7 @@ credentials.write_text(json.dumps({'server_enabled': True, 'server_port': port, 
 credentials.chmod(0o600)
 env = os.environ.copy()
 env.update(XDG_CONFIG_HOME=str(folder / 'xdg'), QT_QPA_PLATFORM=args.platform, OBS_BROWSER_GPU=args.gpu_mode,
-           OBS_BROWSER_DIAGNOSTICS='1', OBS_BROWSER_RUNTIME_ROOT=str(root / 'stage/usr/lib/obs-browser-nvidia'),
+           OBS_BROWSER_DIAGNOSTICS='1', OBS_BROWSER_RUNTIME_ROOT=str(args.runtime or root / 'stage/usr/lib/obs-browser-nvidia'),
            OBS_BROWSER_DATA_ROOT=str(root / 'data'))
 env.pop('OBS_BROWSER_PROXY', None)
 client = None
@@ -65,16 +74,16 @@ with (folder / 'obs.log').open('w') as log:
         scene = client.request('GetCurrentProgramScene')['currentProgramSceneName']
         client.request('CreateInput', sceneName=scene, inputName='frontend-fixture', inputKind='browser_source',
                        inputSettings={'is_local_file': True, 'local_file': str(root / 'tests/frontend.html'),
-                                      'width': 1280, 'height': 720, 'fps_custom': True, 'fps': 60, 'reroute_audio': True},
+                                      'width': args.width, 'height': args.height, 'fps_custom': True, 'fps': args.fps, 'reroute_audio': True},
                        sceneItemEnabled=True)
         if args.platform == 'xcb' and args.gpu_mode == 'nvidia':
             time.sleep(18)  # unsupported GPU path may need its 15-second CPU fallback
         for i in range(3):
             time.sleep(3 if args.platform == 'xcb' else 7)
-            shot = client.request('GetSourceScreenshot', sourceName='frontend-fixture', imageFormat='png', imageWidth=1280, imageHeight=720)
+            shot = client.request('GetSourceScreenshot', sourceName='frontend-fixture', imageFormat='png', imageWidth=args.width, imageHeight=args.height)
             (folder / f'frame-{i}.png').write_bytes(base64.b64decode(shot['imageData'].split(',', 1)[1]))
         result = {'stream': client.request('GetStreamStatus'), 'record': client.request('GetRecordStatus'),
-                  'stats': client.request('GetStats'), 'pixels': inspect_frames(folder)}
+                  'stats': client.request('GetStats'), 'pixels': inspect_frames(folder, args.width, args.height)}
         assert not result['stream']['outputActive'] and not result['record']['outputActive']
         (folder / 'result.json').write_text(json.dumps(result, indent=2))
         print(json.dumps(result, indent=2))

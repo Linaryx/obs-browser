@@ -107,12 +107,18 @@ BrowserSource::BrowserSource(obs_data_t *, obs_source_t *source_) : source(sourc
 #endif
 #ifdef __linux__
 	proc_handler_add(
-		ph, "void browser_render_stats(out int gpu_frames, out int cpu_frames, out bool cpu_fallback)",
+		ph,
+		"void browser_render_stats(out int gpu_frames, out int cpu_frames, out bool cpu_fallback, out int render_frames, out int extra_copy_frames, out int gpu_copy_ns, out int gpu_import_ns, out int graphics_wait_ns)",
 		[](void *p, calldata_t *data) {
 			auto *bs = static_cast<BrowserSource *>(p);
 			calldata_set_int(data, "gpu_frames", bs->gpu_frames.load());
 			calldata_set_int(data, "cpu_frames", bs->cpu_frames.load());
 			calldata_set_bool(data, "cpu_fallback", bs->force_cpu.load());
+			calldata_set_int(data, "render_frames", bs->render_frames.load());
+			calldata_set_int(data, "extra_copy_frames", bs->extra_copy_frames.load());
+			calldata_set_int(data, "gpu_copy_ns", bs->gpu_copy_ns.load());
+			calldata_set_int(data, "gpu_import_ns", bs->gpu_import_ns.load());
+			calldata_set_int(data, "graphics_wait_ns", bs->graphics_wait_ns.load());
 		},
 		this);
 #endif
@@ -169,6 +175,10 @@ void BrowserSource::Destroy()
 	}
 	*p_prev_next = next;
 
+	if (!cef_started_event || os_event_try(cef_started_event) != 0) {
+		delete this;
+		return;
+	}
 	QueueCEFTask([this]() { delete this; });
 }
 
@@ -183,8 +193,11 @@ void BrowserSource::ExecuteOnBrowser(BrowserFunc func, bool async)
 			return;
 		}
 #endif
-		os_event_t *finishedEvent;
-		os_event_init(&finishedEvent, OS_EVENT_TYPE_AUTO);
+		os_event_t *finishedEvent = nullptr;
+		if (os_event_init(&finishedEvent, OS_EVENT_TYPE_AUTO) != 0) {
+			blog(LOG_ERROR, "[obs-browser]: Could not create browser task event");
+			return;
+		}
 		bool success = QueueCEFTask([&]() {
 			if (!!cefBrowser) {
 				func(cefBrowser);
@@ -708,6 +721,9 @@ void BrowserSource::Render()
 #endif
 
 	if (texture) {
+#ifdef __linux__
+		++render_frames;
+#endif
 #ifdef __APPLE__
 		int type = gs_get_device_type();
 		gs_effect_t *effect;
@@ -725,6 +741,9 @@ void BrowserSource::Render()
 		gs_texture_t *draw_texture = texture;
 		if (!linear_sample && !obs_source_get_texcoords_centered(source)) {
 			gs_copy_texture(extra_texture, texture);
+#ifdef __linux__
+			++extra_copy_frames;
+#endif
 			draw_texture = extra_texture;
 
 			linear_sample = true;

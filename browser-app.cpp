@@ -112,6 +112,9 @@ void BrowserApp::OnContextInitialized()
 	for (std::string_view feature : kBrowserFeaturesToEnable) {
 		requestContext->SetPreference(feature.data(), optionValue.get(), errorMessage);
 	}
+	if (on_context_initialized) {
+		on_context_initialized();
+	}
 }
 
 void BrowserApp::OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line)

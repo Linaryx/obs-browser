@@ -1,0 +1,16 @@
+<!doctype html><html><head><style>
+html,body {margin:0;overflow:hidden;background:transparent}
+iframe {position:absolute;border:0;width:100vw;height:100vh}
+.card {position:absolute;width:24%;height:22%;border-radius:22px;
+  background:linear-gradient(135deg,rgba(80,160,255,.5),rgba(255,60,160,.3));
+  backdrop-filter:blur(18px);box-shadow:0 0 30px rgba(20,80,160,.5);
+  animation:float 1.7s ease-in-out infinite alternate}
+@keyframes float {from{transform:translate(-12px,-10px) rotate(-3deg)}
+  to{transform:translate(20px,16px) rotate(3deg)}}
+</style></head><body><iframe src="fixture.html"></iframe><script>
+for(let i=0;i<16;i++) {
+  const card=document.createElement('div'); card.className='card';
+  card.style.left=(8+i%4*18)+'%'; card.style.top=(20+Math.floor(i/4)*16)+'%';
+  card.style.animationDelay=(-i*.13)+'s'; document.body.appendChild(card);
+}
+</script></body></html>

@@ -474,11 +474,16 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 		modifiers[i] = info.modifier;
 	}
 	// CEF owns the fds; INVALID means implicit modifier, not LINEAR.
+	const auto graphics_start = os_gettime_ns();
 	obs_enter_graphics();
+	const auto import_start = os_gettime_ns();
+	bs->graphics_wait_ns += import_start - graphics_start;
 	auto *imported = gs_texture_create_from_dmabuf(
 		info.extra.coded_size.width, info.extra.coded_size.height, format.drm_format, format.gs_format,
 		info.plane_count, fds.data(), strides.data(), offsets.data(),
 		info.modifier == DRM_FORMAT_MOD_INVALID ? nullptr : modifiers.data());
+	const auto copy_start = os_gettime_ns();
+	bs->gpu_import_ns += copy_start - import_start;
 	if (!imported) {
 		obs_leave_graphics();
 		bs->RequestCPUFallback("EGL DMA-BUF import failed");
@@ -494,12 +499,18 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 		return;
 	}
 	const uint32_t cx = visible.width, cy = visible.height;
+	auto copy_format = gs_generalize_format(format.gs_format);
+#ifdef OBS_BROWSER_TEST_HOOKS
+	if (std::getenv("OBS_BROWSER_TEST_LEGACY_COPY")) {
+		copy_format = format.gs_format;
+	}
+#endif
 	if (bs->texture && (gs_texture_get_width(bs->texture) != cx || gs_texture_get_height(bs->texture) != cy ||
-			    gs_texture_get_color_format(bs->texture) != format.gs_format)) {
+			    gs_texture_get_color_format(bs->texture) != copy_format)) {
 		bs->DestroyTextures();
 	}
 	if (!bs->texture) {
-		bs->texture = gs_texture_create(cx, cy, format.gs_format, 1, nullptr, 0);
+		bs->texture = gs_texture_create(cx, cy, copy_format, 1, nullptr, 0);
 	}
 	bool copied = false;
 	if (bs->texture) {
@@ -511,6 +522,7 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 			UpdateExtraTexture();
 		}
 	}
+	bs->gpu_copy_ns += os_gettime_ns() - copy_start;
 	gs_texture_destroy(imported);
 	obs_leave_graphics();
 	if (!copied) {

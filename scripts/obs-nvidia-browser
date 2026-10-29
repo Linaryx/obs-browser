@@ -21,9 +21,19 @@ done
 for entry in "$runtime"/*; do
   ln -sfn "$entry" "$overlay/${entry##*/}"
 done
-export OBS_BROWSER_GPU=${OBS_BROWSER_GPU:-nvidia}
-# Custom docks require XWayland.
-export QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-xcb}
+if [[ -z ${QT_QPA_PLATFORM:-} ]]; then
+  if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+    export QT_QPA_PLATFORM=wayland
+  else
+    export QT_QPA_PLATFORM=xcb
+  fi
+fi
+if [[ -z ${OBS_BROWSER_GPU:-} ]]; then
+  case "$QT_QPA_PLATFORM" in
+    wayland*) export OBS_BROWSER_GPU=nvidia ;;
+    *) export OBS_BROWSER_GPU=cpu ;;
+  esac
+fi
 # Avoid concurrent GTK/GLib dispatch by Qt and CEF during initialization.
 export QT_NO_GLIB=${QT_NO_GLIB:-1}
 bwrap --die-with-parent --bind / / --dev-bind /dev /dev \

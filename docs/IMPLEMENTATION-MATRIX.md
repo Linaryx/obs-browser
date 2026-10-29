@@ -18,6 +18,8 @@ stable distribution. This is the pinned SDK/runtime, not a mixture of system hea
 
 ## Matrix
 
+Additional fork revisions and reuse decisions are recorded in [FORKS.md](FORKS.md).
+
 | PR | Merge status at audit | Linux applicability | Dependencies / conflicts | Local coverage / remaining tests | Final decision |
 |---|---|---|---|---|---|
 | [CEF #4238](https://github.com/chromiumembedded/cef/pull/4238) native-handle SharedImages | **Merged**; master `c5b0618`, 8078 backport `3adefb8` | Direct NVIDIA OSR fix: avoids CPU-mappable linear GBM allocation | Also needs Chromium native-handle blit CL 8220427; both in selected CEF 156.0.14. Not all older M156 distributions contain the fix | Real RTX 5060/615.78.08: native Wayland GPU, 1/4 sources, alpha samples, WebGL, audio, ~60 paint FPS; full OBS frontend GPU smoke passed | **Already upstream** in pinned CEF; do not reapply |

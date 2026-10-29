@@ -6,6 +6,7 @@ This is **experimental**, not an official OBS build or a claim of universal NVID
 See [measured results and remaining verification](docs/VALIDATION.md).
 The [upstream implementation matrix](docs/IMPLEMENTATION-MATRIX.md) covers all 15 requested PRs,
 including merged fixes deliberately not duplicated and incompatible changes deliberately deferred.
+See [fork comparison](docs/FORKS.md) for the selected WizardCM, blastorg and obs-rust changes.
 
 ## What changed
 
@@ -110,9 +111,10 @@ OBS_BROWSER_DATA_ROOT="$PWD/data" \
 OBS_BROWSER_GPU=nvidia QT_QPA_PLATFORM=wayland bash scripts/obs-nvidia-browser
 ```
 
-Native Wayland does **not** gain custom browser docks from this patch. The launcher defaults to
-`QT_QPA_PLATFORM=xcb` for dock compatibility, but the GPU path must also pass XWayland validation;
-consult the results. Keep native Wayland and XWayland results separate.
+On a Wayland session the launcher defaults to native Wayland and NVIDIA acceleration. On X11 it
+defaults to CPU paint. Explicit `QT_QPA_PLATFORM` and `OBS_BROWSER_GPU` values are preserved.
+Native Wayland custom docks remain unavailable; use `QT_QPA_PLATFORM=xcb OBS_BROWSER_GPU=cpu`
+for the existing dock path. The package adds a separate **OBS Studio (NVIDIA)** menu entry.
 
 To roll back, quit this OBS and run ordinary `obs`: no installed core modules have changed.
 For software mode use `OBS_BROWSER_GPU=cpu`. For logs add `OBS_BROWSER_DIAGNOSTICS=1`.
@@ -158,6 +160,30 @@ ctest --test-dir build --output-on-failure   # pure GPU-policy unit tests, no di
 The tearing test checks sampled frames, not every frame or every possible GPU scheduling pattern.
 The alpha audit deliberately does not report the known premultiplied-sRGB defect as fixed.
 
+1080p performance and lifecycle checks:
+
+```sh
+python3 tests/performance_audit.py --tag local-run
+python3 tests/lifecycle_audit.py --suffix=-local-run
+python3 tests/launcher_audit.py
+python3 tests/benchmark_unit.py
+```
+
+The performance audit runs CPU paint, the previous GPU copy path and the current path sequentially,
+then four ordinary 1080p60 sources for 90 seconds. Its heavy fixture uses 16 animated blur layers;
+it is a stress workload, not a promise that every page reaches 60 FPS. CPU figures after warmup are
+reported separately. Import/copy/graphics-lock timings and paint/render FPS come from each source.
+`OBS_BROWSER_TEST_LEGACY_COPY` is available only in test builds; the production package ignores it.
+
+Verified on RTX 5060 / driver 615.78.08 with OBS 33: four ordinary 1920×1080 sources
+held approximately 60 paint FPS each for 90 seconds without CPU fallback. The heavy blur
+fixture reached approximately 49 FPS with one GPU source versus 7.5 FPS with CPU paint;
+four heavy GPU sources reached approximately 36.6 FPS each. The generalized-copy change
+has only a small measured throughput benefit, not a substantial CPU reduction.
+The native OBS frontend also passed at 1080p60 with WebGL, audio and JS status callbacks.
+Startup regressions passed twice, including immediate unload, early source release and
+real profile-singleton initialization failure. These checks do not resolve the dock or sRGB limitations.
+
 ### Optional developer features
 
 - **Source Inspect / DevTools (#528 adaptation):** enable `-DOBS_BROWSER_ENABLE_DEVTOOLS=ON`, rebuild
@@ -184,6 +210,7 @@ For a fresh-config **full OBS frontend** smoke test of the mount overlay, screen
 
 ```sh
 python3 tests/frontend_smoke.py --platform wayland
+python3 tests/frontend_smoke.py --platform wayland --width 1920 --height 1080 --fps 60 --name frontend-1080
 # Optional separate XWayland run (currently may fall back to CPU):
 python3 tests/frontend_smoke.py --platform xcb --dock --name frontend-xcb
 ```

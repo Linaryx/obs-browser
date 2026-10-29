@@ -36,6 +36,13 @@ int main(int argc, char **argv)
 	}
 	const int count = std::atoi(argv[5]);
 	const int seconds = argc > 6 ? std::atoi(argv[6]) : 20;
+	const int requested_width = qEnvironmentVariableIntValue("OBS_BROWSER_TEST_WIDTH");
+	const int requested_height = qEnvironmentVariableIntValue("OBS_BROWSER_TEST_HEIGHT");
+	const int width = requested_width > 0 ? requested_width : 1280;
+	const int height = requested_height > 0 ? requested_height : 720;
+	if (width < 256 || height < 256 || width > 8192 || height > 8192 || count < 1 || count > 16 || seconds < 1) {
+		return 2;
+	}
 	QDir().mkpath(argv[4]);
 	const auto config = QString(argv[4]) + "/config";
 	QDir().mkpath(config);
@@ -60,8 +67,8 @@ int main(int argc, char **argv)
 	vi.graphics_module = "libobs-opengl.so";
 	vi.fps_num = 60;
 	vi.fps_den = 1;
-	vi.base_width = vi.output_width = 1280;
-	vi.base_height = vi.output_height = 720;
+	vi.base_width = vi.output_width = width;
+	vi.base_height = vi.output_height = height;
 	vi.output_format = VIDEO_FORMAT_RGBA;
 	vi.colorspace = VIDEO_CS_709;
 	vi.range = VIDEO_RANGE_FULL;
@@ -83,11 +90,12 @@ int main(int argc, char **argv)
 		obs_data_t *s = obs_data_create();
 		obs_data_set_bool(s, "is_local_file", true);
 		obs_data_set_string(s, "local_file", argv[3]);
-		obs_data_set_int(s, "width", 1280);
-		obs_data_set_int(s, "height", 720);
+		obs_data_set_int(s, "width", width);
+		obs_data_set_int(s, "height", height);
 		obs_data_set_bool(s, "fps_custom", true);
 		obs_data_set_int(s, "fps", 60);
 		obs_data_set_bool(s, "reroute_audio", true);
+		obs_data_set_bool(s, "shutdown", qEnvironmentVariableIsSet("OBS_BROWSER_TEST_SHUTDOWN"));
 		auto name = "test-" + std::to_string(i);
 		auto *src = obs_source_create("browser_source", name.c_str(), s, nullptr);
 		obs_data_release(s);
@@ -99,14 +107,28 @@ int main(int argc, char **argv)
 		sources.push_back(src);
 	}
 	obs_set_output_source(0, obs_scene_get_source(scene));
+	if (qEnvironmentVariableIsSet("OBS_BROWSER_TEST_LIFECYCLE")) {
+		auto *item = obs_scene_find_source(scene, "test-0");
+		QTimer::singleShot(3000, &app, [item]() { obs_sceneitem_set_visible(item, false); });
+		QTimer::singleShot(6000, &app, [item]() { obs_sceneitem_set_visible(item, true); });
+		const auto resize = [src = sources[0]](int cx, int cy) {
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_int(settings, "width", cx);
+			obs_data_set_int(settings, "height", cy);
+			obs_source_update(src, settings);
+			obs_data_release(settings);
+		};
+		QTimer::singleShot(9000, &app, [resize, width, height]() { resize(width - 160, height - 90); });
+		QTimer::singleShot(12000, &app, [resize, width, height]() { resize(width, height); });
+	}
 	const auto started = os_gettime_ns();
 	QTimer capture;
 	int frame = 0;
 	QObject::connect(&capture, &QTimer::timeout, [&]() {
 		obs_enter_graphics();
 		auto *render = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		auto *stage = gs_stagesurface_create(1280, 720, GS_RGBA);
-		if (gs_texrender_begin(render, 1280, 720)) {
+		auto *stage = gs_stagesurface_create(width, height, GS_RGBA);
+		if (gs_texrender_begin(render, width, height)) {
 			vec4 clear{};
 			if (qEnvironmentVariable("OBS_BROWSER_TEST_BACKGROUND") == "white") {
 				clear.x = clear.y = clear.z = clear.w = 1.0f;
@@ -114,14 +136,14 @@ int main(int argc, char **argv)
 				clear.w = 1.0f;
 			}
 			gs_clear(GS_CLEAR_COLOR, &clear, 0, 0);
-			gs_ortho(0, 1280, 0, 720, -100, 100);
+			gs_ortho(0, width, 0, height, -100, 100);
 			obs_source_video_render(sources[0]);
 			gs_texrender_end(render);
 			gs_stage_texture(stage, gs_texrender_get_texture(render));
 			uint8_t *pixels = nullptr;
 			uint32_t stride = 0;
 			if (gs_stagesurface_map(stage, &pixels, &stride)) {
-				QImage image(pixels, 1280, 720, stride, QImage::Format_RGBA8888);
+				QImage image(pixels, width, height, stride, QImage::Format_RGBA8888);
 				image.save(QString(argv[4]) + QString("/frame-%1.png").arg(frame++));
 				gs_stagesurface_unmap(stage);
 			}
@@ -136,10 +158,15 @@ int main(int argc, char **argv)
 			calldata_t data;
 			calldata_init(&data);
 			if (proc_handler_call(obs_source_get_proc_handler(src), "browser_render_stats", &data)) {
-				printf("PAINT source=%s gpu=%lld cpu=%lld fallback=%d\n", obs_source_get_name(src),
-				       (long long)calldata_int(&data, "gpu_frames"),
+				printf("PAINT source=%s gpu=%lld cpu=%lld fallback=%d elapsed_s=%.3f renders=%lld extra=%lld copy_ns=%lld import_ns=%lld wait_ns=%lld\n",
+				       obs_source_get_name(src), (long long)calldata_int(&data, "gpu_frames"),
 				       (long long)calldata_int(&data, "cpu_frames"),
-				       calldata_bool(&data, "cpu_fallback"));
+				       calldata_bool(&data, "cpu_fallback"), (os_gettime_ns() - started) / 1e9,
+				       (long long)calldata_int(&data, "render_frames"),
+				       (long long)calldata_int(&data, "extra_copy_frames"),
+				       (long long)calldata_int(&data, "gpu_copy_ns"),
+				       (long long)calldata_int(&data, "gpu_import_ns"),
+				       (long long)calldata_int(&data, "graphics_wait_ns"));
 			}
 			calldata_free(&data);
 		}

@@ -53,6 +53,8 @@ struct BrowserSource {
 	std::atomic<bool> fallback_requested{false};
 	std::atomic<uint64_t> gpu_started_ns{0};
 	std::atomic<uint64_t> gpu_frames{0}, cpu_frames{0};
+	std::atomic<uint64_t> render_frames{0}, extra_copy_frames{0}, gpu_copy_ns{0}, gpu_import_ns{0},
+		graphics_wait_ns{0};
 	void RequestCPUFallback(const char *reason);
 #endif
 	std::atomic<bool> create_browser{false};

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Check uniform-frame captures under CPU load."""
 import json
+import argparse
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 root = Path(__file__).resolve().parent.parent
-folder = root / 'test-results/tearing-native-gpu'
+parser = argparse.ArgumentParser()
+parser.add_argument('--suffix', default='')
+args = parser.parse_args()
+folder = root / 'test-results' / f'tearing-native-gpu{args.suffix}'
 folder.mkdir(parents=True, exist_ok=False)
 env = os.environ.copy()
 env.update(QT_QPA_PLATFORM='wayland', OBS_BROWSER_GPU='nvidia', OBS_BROWSER_TEST_CAPTURE_INTERVAL_MS='50')

@@ -67,6 +67,7 @@ class BrowserApp : public CefApp, public CefRenderProcessHandler, public CefBrow
 	typedef std::map<int, CefRefPtr<CefV8Value>> CallbackMap;
 
 	bool shared_texture_available;
+	std::function<void()> on_context_initialized;
 	CallbackMap callbackMap;
 	int callbackId;
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -74,6 +75,7 @@ class BrowserApp : public CefApp, public CefRenderProcessHandler, public CefBrow
 #endif
 
 public:
+	void SetContextInitializedCallback(std::function<void()> callback) { on_context_initialized.swap(callback); }
 #if defined(__APPLE__) || defined(_WIN32)
 	inline BrowserApp(bool shared_texture_available_ = false) : shared_texture_available(shared_texture_available_)
 #else
