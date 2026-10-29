@@ -211,7 +211,8 @@ void QCefBrowserClient::OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<Cef
 void QCefBrowserClient::OnAfterCreated(CefRefPtr<CefBrowser>)
 {
 	if (widget) {
-		widget->Resize();
+		// QWidget geometry belongs to the Qt GUI thread, not the CEF thread.
+		QMetaObject::invokeMethod(widget, &QCefWidgetInternal::Resize, Qt::QueuedConnection);
 	}
 }
 #endif
