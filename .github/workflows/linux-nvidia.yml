@@ -14,7 +14,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Dependencies
-        run: pacman -Syu --noconfirm git cmake ninja obs-studio qt6-base nlohmann-json simde libdrm libglvnd libx11 wayland curl python
+        run: pacman -Syu --noconfirm git cmake ninja obs-studio qt6-base nlohmann-json simde xorg-server-xvfb libdrm libglvnd libx11 wayland curl python
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
@@ -25,7 +25,7 @@ jobs:
           cef=$(bash scripts/fetch-cef.sh)
           cmake -S . -B build -G Ninja -DCEF_ROOT_DIR="$cef" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DOBS_BROWSER_BUILD_TESTS=ON -DOBS_BROWSER_ENABLE_DEVTOOLS=${{ matrix.devtools }}
           cmake --build build -j2
-          ctest --test-dir build --output-on-failure
+          xvfb-run -a ctest --test-dir build --output-on-failure
           DESTDIR="$PWD/stage" cmake --install build
           bash -n scripts/*.sh scripts/obs-nvidia-browser packaging/aur/PKGBUILD
           git diff --check
