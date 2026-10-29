@@ -10,6 +10,7 @@ pkgbase = obs-browser-nvidia-git
 	makedepends = cmake
 	makedepends = ninja
 	makedepends = nlohmann-json
+	makedepends = simde
 	depends = obs-studio>=33
 	depends = qt6-base
 	depends = libx11

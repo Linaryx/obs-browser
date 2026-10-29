@@ -9,7 +9,7 @@ depends=('obs-studio>=33' 'qt6-base' 'libx11' 'libdrm' 'libglvnd' 'bubblewrap' '
          'alsa-lib' 'at-spi2-core' 'cairo' 'libcups' 'dbus' 'expat' 'glib2' 'gtk3'
          'libxcomposite' 'libxdamage' 'libxext' 'libxfixes' 'libxkbcommon'
          'libxrandr' 'mesa' 'nspr' 'nss' 'pango' 'systemd-libs')
-makedepends=('git' 'cmake' 'ninja' 'nlohmann-json')
+makedepends=('git' 'cmake' 'ninja' 'nlohmann-json' 'simde')
 options=('!strip')
 _repo=${OBS_BROWSER_FORK_URL:-https://github.com/Linaryx/obs-browser.git}
 _cef='cef_binary_156.0.14+g4fa4ab5+chromium-156.0.8078.48_linux64_minimal'

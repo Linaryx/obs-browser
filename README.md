@@ -89,7 +89,7 @@ OBS_BROWSER_FORK_URL=file:///absolute/path/to/obs-browser makepkg -si
 ### Build and stage manually
 
 ```sh
-sudo pacman -S --needed base-devel git cmake ninja obs-studio qt6-base nlohmann-json \
+sudo pacman -S --needed base-devel git cmake ninja obs-studio qt6-base nlohmann-json simde \
   libdrm libglvnd libx11 wayland curl bubblewrap ffmpeg
 cef=$(bash scripts/fetch-cef.sh)
 cmake -S . -B build -G Ninja -DCEF_ROOT_DIR="$cef" \
