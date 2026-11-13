@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Module mount overlay, not a security sandbox.
+set -euo pipefail
+runtime=${OBS_BROWSER_RUNTIME_ROOT:-/usr/lib/obs-browser-nvidia}
+data=${OBS_BROWSER_DATA_ROOT:-/usr/share/obs/obs-plugins/obs-browser}
+core=${OBS_BROWSER_CORE_ROOT:-/usr/lib/obs-modules/core}
+coredata=${OBS_BROWSER_COREDATA_ROOT:-/usr/share/obs/obs-modules/core/obs-browser}
+if [[ ! -f $core/obs-browser.so ]]; then
+  echo 'This launcher currently requires the Arch OBS 33 core module layout.' >&2
+  exit 1
+fi
+[[ -f $runtime/obs-browser.so && -d $data ]] || {
+  echo 'Missing experimental runtime/data' >&2
+  exit 1
+}
+work=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/obs-browser-nvidia.XXXXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+overlay=$work/core
+original=$work/original
+mkdir "$overlay" "$original"
+for entry in "$core"/*; do
+  ln -s "$original/${entry##*/}" "$overlay/${entry##*/}"
+done
+for entry in "$runtime"/*; do
+  ln -sfn "$entry" "$overlay/${entry##*/}"
+done
+if [[ -z ${QT_QPA_PLATFORM:-} ]]; then
+  if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+    export QT_QPA_PLATFORM=wayland
+  else
+    export QT_QPA_PLATFORM=xcb
+  fi
+fi
+if [[ -z ${OBS_BROWSER_GPU:-} ]]; then
+  case "$QT_QPA_PLATFORM" in
+  wayland*) export OBS_BROWSER_GPU=nvidia ;;
+  *) export OBS_BROWSER_GPU=cpu ;;
+  esac
+fi
+# Do not set QT_NO_GLIB by default: it disables Qt's GLib dispatcher, so OBS
+# never processes xdg-desktop-portal ScreenCast responses and screen/window
+# capture stays black. Opt in only if the GTK/Wayland startup race returns.
+if [[ ${OBS_BROWSER_QT_NO_GLIB:-0} == 1 ]]; then
+  export QT_NO_GLIB=1
+fi
+bwrap --die-with-parent --bind / / --dev-bind /dev /dev \
+  --ro-bind "$core" "$original" \
+  --ro-bind "$overlay" "$core" \
+  --ro-bind "$data" "$coredata" \
+  obs "$@"

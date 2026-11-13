@@ -46,7 +46,23 @@ struct BrowserSource {
 	obs_source_t *source = nullptr;
 
 	bool tex_sharing_avail = false;
-	bool create_browser = false;
+#ifdef __linux__
+	std::atomic<bool> force_cpu{false};
+	std::atomic<bool> gpu_active{false};
+	std::atomic<bool> gpu_frame_received{false};
+	std::atomic<bool> fallback_requested{false};
+	std::atomic<bool> fallback_in_progress{false};
+	std::atomic<uint64_t> gpu_started_ns{0};
+	std::atomic<uint64_t> gpu_frames{0}, cpu_frames{0};
+	std::atomic<uint64_t> render_frames{0}, extra_copy_frames{0}, gpu_copy_ns{0}, gpu_import_ns{0},
+		graphics_wait_ns{0}, partial_copy_frames{0}, full_copy_frames{0};
+	uint64_t last_stats_ns = 0;
+	void RequestCPUFallback(const char *reason);
+#ifdef OBS_BROWSER_TEST_HOOKS
+	std::atomic<uint64_t> test_browser_creations{0}, test_attached_browsers{0}, test_peak_browsers{0};
+#endif
+#endif
+	std::atomic<bool> create_browser{false};
 	std::recursive_mutex lockBrowser;
 	CefRefPtr<CefBrowser> cefBrowser;
 
@@ -57,6 +73,7 @@ struct BrowserSource {
 	uint32_t last_cx = 0;
 	uint32_t last_cy = 0;
 	gs_color_format last_format = GS_UNKNOWN;
+	bool texture_initialized = false;
 
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 #ifdef _WIN32
@@ -97,6 +114,7 @@ struct BrowserSource {
 			gs_texture_destroy(texture);
 			texture = nullptr;
 		}
+		texture_initialized = false;
 		obs_leave_graphics();
 	}
 
@@ -125,6 +143,9 @@ struct BrowserSource {
 	void SetShowing(bool showing);
 	void SetActive(bool active);
 	void Refresh();
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	void Inspect();
+#endif
 
 #if defined(BROWSER_EXTERNAL_BEGIN_FRAME_ENABLED) && defined(ENABLE_BROWSER_SHARED_TEXTURE)
 	inline void SignalBeginFrame();

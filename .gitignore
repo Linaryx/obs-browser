@@ -7,6 +7,8 @@
 #cmake
 /cmbuild/
 /build/
+/build-release/
+/build-v3/
 /build32/
 /build64/
 /release/
@@ -16,6 +18,17 @@
 /debug32/
 /debug64/
 /builds/
+/stage/
+/stage-release/
+/dist/
+/test-results/
+/audit-cache/
+/tests/__pycache__/
+__pycache__/
+/packaging/aur/src/
+/packaging/aur/pkg/
+/packaging/aur/build/
+/packaging/aur/*.pkg.tar.*
 *.o.d
 *.ninja
 .ninja*

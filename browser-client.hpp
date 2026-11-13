@@ -22,6 +22,7 @@
 #include <util/threading.h>
 #include "cef-headers.hpp"
 #include "obs-browser-source.hpp"
+#include <cstdlib>
 
 struct BrowserSource;
 
@@ -41,6 +42,9 @@ class BrowserClient : public CefClient,
 	bool sharing_available = false;
 	bool reroute_audio = true;
 	ControlLevel webpage_control_level = DEFAULT_CONTROL_LEVEL;
+	bool quiet_console = false;
+	uint64_t console_errors = 0, console_fatals = 0, console_warnings = 0;
+	std::string console_source_name;
 
 	inline bool valid() const;
 
@@ -63,7 +67,11 @@ public:
 		  webpage_control_level(webpage_control_level_),
 		  bs(bs_)
 	{
+		const char *quiet = std::getenv("OBS_BROWSER_QUIET_CONSOLE");
+		quiet_console = quiet && std::string_view(quiet) == "1";
+		console_source_name = obs_source_get_name(bs_->source);
 	}
+	~BrowserClient() override;
 
 	/* CefClient */
 	virtual CefRefPtr<CefLoadHandler> GetLoadHandler() override;

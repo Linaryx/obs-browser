@@ -1,0 +1,56 @@
+name: Experimental Linux CEF 156
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  arch-build:
+    strategy:
+      matrix:
+        devtools: ['OFF', 'ON']
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Dependencies
+        run: pacman -Syu --noconfirm git cmake ninja obs-studio qt6-base nlohmann-json simde xorg-server-xvfb xorg-xauth libdrm libglvnd libx11 wayland curl python zstd
+      - uses: actions/checkout@v4
+      - name: Trust checkout owner
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/cache@v4
+        with:
+          path: /root/.cache/obs-browser-nvidia
+          key: cef-linux64-156.0.30-g6028375
+      - name: Configure and compile against installed OBS SDK (no OBS rebuild)
+        run: |
+          cef=$(bash scripts/fetch-cef.sh)
+          cmake -S . -B build -G Ninja -DCEF_ROOT_DIR="$cef" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr '-DCMAKE_C_FLAGS=-march=x86-64-v3 -mtune=generic' '-DCMAKE_CXX_FLAGS=-march=x86-64-v3 -mtune=generic' -DOBS_BROWSER_BUILD_TESTS=ON -DOBS_BROWSER_ENABLE_DEVTOOLS=${{ matrix.devtools }}
+          cmake --build build -j2
+          xvfb-run -a ctest --test-dir build --output-on-failure
+          DESTDIR="$PWD/stage" cmake --install build
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a python3 tests/startup_audit.py --output-dir test-results/startup-ci --cef-arg=--disable-gpu
+          xvfb-run -a python3 tests/fallback_audit.py --output-dir test-results/fallback-ci
+          bash -n scripts/*.sh scripts/obs-nvidia-browser packaging/aur/PKGBUILD
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-arch-browser-cef156-devtools-${{ matrix.devtools }}
+          path: |
+            build/obs-browser.so
+            build/obs-browser-page
+            build/browser-test-host
+          # The CEF runtime is fetched separately; artifact is not a complete install.
+      - name: Package complete Arch test bundle
+        if: matrix.devtools == 'OFF'
+        run: |
+          cmake -S . -B build -DOBS_BROWSER_BUILD_TESTS=OFF
+          cmake --build build -j2
+          bash scripts/package-test-build.sh build dist
+      - uses: actions/upload-artifact@v4
+        if: matrix.devtools == 'OFF'
+        with:
+          name: experimental-arch-browser-cef156-complete
+          path: |
+            dist/*.tar.zst
+            dist/*.tar.zst.sha256

@@ -25,6 +25,7 @@
 #include <obs.hpp>
 #include <functional>
 #include <sstream>
+#include <cstdlib>
 #include <thread>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -36,6 +37,9 @@
 #include "browser-version.h"
 
 #include "cef-headers.hpp"
+#ifdef __linux__
+#include "linux-gpu-policy.hpp"
+#endif
 
 #ifdef _WIN32
 #include <util/windows/ComPtr.hpp>
@@ -71,6 +75,8 @@ using namespace std;
 static thread manager_thread;
 static bool manager_initialized = false;
 os_event_t *cef_started_event = nullptr;
+static os_event_t *cef_initialized_event = nullptr;
+static bool browser_initialized = false;
 
 #if defined(_WIN32)
 static int adapterCount = 0;
@@ -122,6 +128,9 @@ public:
 
 bool QueueCEFTask(std::function<void()> task)
 {
+	if (!cef_started_event || os_event_try(cef_started_event) != 0) {
+		return false;
+	}
 	return CefPostTask(TID_UI, CefRefPtr<BrowserTask>(new BrowserTask(task)));
 }
 
@@ -239,6 +248,17 @@ static obs_properties_t *browser_source_get_properties(void *data)
 			return false;
 		},
 		bs);
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	obs_properties_add_button2(
+		props, "inspect", obs_module_text("Inspect"),
+		[](obs_properties_t *, obs_property_t *, void *data) {
+			if (data) {
+				static_cast<BrowserSource *>(data)->Inspect();
+			}
+			return false;
+		},
+		bs);
+#endif
 	return props;
 }
 
@@ -283,7 +303,7 @@ static obs_missing_files_t *browser_source_missingfiles(void *data)
 
 static CefRefPtr<BrowserApp> app;
 
-static void BrowserInit(void)
+static bool BrowserInit(void)
 {
 	string path = obs_get_module_binary_path(obs_current_module());
 	path = path.substr(0, path.find_last_of('/') + 1);
@@ -303,6 +323,9 @@ static void BrowserInit(void)
 
 	CefSettings settings;
 	settings.log_severity = LOGSEVERITY_FATAL;
+	if (std::getenv("OBS_BROWSER_DIAGNOSTICS")) {
+		settings.log_severity = LOGSEVERITY_INFO;
+	}
 	BPtr<char> log_path = obs_module_config_path("debug.log");
 	BPtr<char> log_path_abs = os_get_abs_path_ptr(log_path.Get());
 	CefString(&settings.log_file) = log_path_abs;
@@ -387,6 +410,12 @@ static void BrowserInit(void)
 #else
 	app = new BrowserApp(tex_sharing_avail, obs_get_nix_platform() == OBS_NIX_PLATFORM_WAYLAND);
 #endif
+	app->SetContextInitializedCallback([]() {
+		if (!CefRegisterSchemeHandlerFactory("http", "absolute", new BrowserSchemeHandlerFactory())) {
+			blog(LOG_ERROR, "[obs-browser]: Could not register local-file scheme handler");
+		}
+		os_event_signal(cef_started_event);
+	});
 
 #ifdef _WIN32
 	CefExecuteProcess(args, app, nullptr);
@@ -406,13 +435,11 @@ static void BrowserInit(void)
 #else
 		blog(LOG_ERROR, "[obs-browser]: CEF failed to initialize.");
 #endif
-		return;
+		app = nullptr;
+		return false;
 	}
 
-	// Register custom scheme handler for local browser sources
-	CefRegisterSchemeHandlerFactory("http", "absolute", new BrowserSchemeHandlerFactory());
-
-	os_event_signal(cef_started_event);
+	return true;
 }
 
 static void BrowserShutdown(void)
@@ -431,9 +458,12 @@ static void BrowserShutdown(void)
 #ifndef ENABLE_BROWSER_QT_LOOP
 static void BrowserManagerThread(void)
 {
-	BrowserInit();
-	CefRunMessageLoop();
-	BrowserShutdown();
+	browser_initialized = BrowserInit();
+	os_event_signal(cef_initialized_event);
+	if (browser_initialized) {
+		CefRunMessageLoop();
+		BrowserShutdown();
+	}
 }
 #endif
 
@@ -441,7 +471,7 @@ extern "C" EXPORT void obs_browser_initialize(void)
 {
 	if (!os_atomic_set_bool(&manager_initialized, true)) {
 #ifdef ENABLE_BROWSER_QT_LOOP
-		BrowserInit();
+		browser_initialized = BrowserInit();
 #else
 		manager_thread = thread(BrowserManagerThread);
 #endif
@@ -731,9 +761,12 @@ static void check_hwaccel_support(void)
 	}
 
 	if (strstr(glVersion, "NVIDIA") != NULL) {
-		hwaccel = false;
-		blog(LOG_INFO,
-		     "[obs-browser]: Blacklisted driver detected, disabling browser source hardware acceleration.");
+		const bool experimental = LinuxNVIDIAExperimental(ParseLinuxBrowserGPU(std::getenv("OBS_BROWSER_GPU")),
+								  CEF_VERSION_MAJOR, CEF_VERSION_PATCH,
+								  CHROME_VERSION_BUILD);
+		hwaccel = experimental;
+		blog(LOG_INFO, "[obs-browser]: NVIDIA shared textures: %s (OBS_BROWSER_GPU=nvidia to opt in)",
+		     experimental ? "experimental" : "disabled");
 	}
 	return;
 }
@@ -864,7 +897,15 @@ bool obs_module_load(void)
 	qRegisterMetaType<MessageTask>("MessageTask");
 #endif
 
-	os_event_init(&cef_started_event, OS_EVENT_TYPE_MANUAL);
+	if (os_event_init(&cef_started_event, OS_EVENT_TYPE_MANUAL) != 0 ||
+	    os_event_init(&cef_initialized_event, OS_EVENT_TYPE_MANUAL) != 0) {
+		blog(LOG_ERROR, "[obs-browser]: Could not create CEF startup events");
+		os_event_destroy(cef_started_event);
+		os_event_destroy(cef_initialized_event);
+		cef_started_event = nullptr;
+		cef_initialized_event = nullptr;
+		return false;
+	}
 
 #if defined(_WIN32) && CHROME_VERSION_BUILD < 5615
 	/* CefEnableHighDPISupport doesn't do anything on OS other than Windows. Would also crash macOS at this point as CEF is not directly linked */
@@ -892,6 +933,11 @@ bool obs_module_load(void)
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 	OBSDataAutoRelease private_data = obs_get_private_data();
 	hwaccel = obs_data_get_bool(private_data, "BrowserHWAccel");
+#ifdef __linux__
+	if (LinuxBrowserCPUPaint(ParseLinuxBrowserGPU(std::getenv("OBS_BROWSER_GPU")))) {
+		hwaccel = false;
+	}
+#endif
 
 	if (hwaccel) {
 		check_hwaccel_support();
@@ -928,10 +974,13 @@ void obs_module_post_load(void)
 void obs_module_unload(void)
 {
 #ifdef ENABLE_BROWSER_QT_LOOP
-	BrowserShutdown();
+	if (browser_initialized) {
+		BrowserShutdown();
+	}
 #else
 	if (manager_thread.joinable()) {
-		if (!QueueCEFTask([]() { CefQuitMessageLoop(); })) {
+		os_event_wait(cef_initialized_event);
+		if (browser_initialized && !CefPostTask(TID_UI, new BrowserTask([]() { CefQuitMessageLoop(); }))) {
 			blog(LOG_DEBUG, "[obs-browser]: Failed to post CefQuit task to loop");
 		}
 
@@ -940,4 +989,9 @@ void obs_module_unload(void)
 #endif
 
 	os_event_destroy(cef_started_event);
+	os_event_destroy(cef_initialized_event);
+	cef_started_event = nullptr;
+	cef_initialized_event = nullptr;
+	browser_initialized = false;
+	manager_initialized = false;
 }

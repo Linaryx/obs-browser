@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OBS Studio (NVIDIA)
+Comment=OBS with experimental NVIDIA browser acceleration
+Exec=obs-nvidia-browser
+TryExec=obs-nvidia-browser
+Icon=com.obsproject.Studio
+Terminal=false
+Categories=AudioVideo;Recorder;
+StartupNotify=true
+StartupWMClass=com.obsproject.Studio

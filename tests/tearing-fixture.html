@@ -1,0 +1,7 @@
+<!doctype html><html><head><style>html,body {margin:0;overflow:hidden} canvas {display:block}</style></head>
+<body><canvas width="1280" height="720" id="frame"></canvas><script>
+const ctx = document.getElementById('frame').getContext('2d', {alpha:false});
+const colors = ['#f00','#0f0','#00f','#fff','#000']; let number = 0;
+function paint() {ctx.fillStyle=colors[number++ % colors.length];ctx.fillRect(0,0,1280,720);requestAnimationFrame(paint)}
+paint();
+</script></body></html>

@@ -17,6 +17,7 @@
  ******************************************************************************/
 
 #include "obs-browser-source.hpp"
+#include <util/platform.h>
 #include "browser-client.hpp"
 #include "browser-scheme.hpp"
 #include "wide-string.hpp"
@@ -100,6 +101,51 @@ BrowserSource::BrowserSource(obs_data_t *, obs_source_t *source_) : source(sourc
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void javascript_event(string eventName, string jsonString)", jsEventFunction,
 			 (void *)this);
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	proc_handler_add(
+		ph, "void inspect()", [](void *p, calldata_t *) { static_cast<BrowserSource *>(p)->Inspect(); }, this);
+#endif
+#ifdef __linux__
+	proc_handler_add(
+		ph,
+		"void browser_render_stats(out int gpu_frames, out int cpu_frames, out bool cpu_fallback, out int render_frames, out int extra_copy_frames, out int gpu_copy_ns, out int gpu_import_ns, out int graphics_wait_ns, out int partial_copy_frames, out int full_copy_frames)",
+		[](void *p, calldata_t *data) {
+			auto *bs = static_cast<BrowserSource *>(p);
+			calldata_set_int(data, "gpu_frames", bs->gpu_frames.load());
+			calldata_set_int(data, "cpu_frames", bs->cpu_frames.load());
+			calldata_set_bool(data, "cpu_fallback", bs->force_cpu.load());
+			calldata_set_int(data, "render_frames", bs->render_frames.load());
+			calldata_set_int(data, "extra_copy_frames", bs->extra_copy_frames.load());
+			calldata_set_int(data, "gpu_copy_ns", bs->gpu_copy_ns.load());
+			calldata_set_int(data, "gpu_import_ns", bs->gpu_import_ns.load());
+			calldata_set_int(data, "graphics_wait_ns", bs->graphics_wait_ns.load());
+			calldata_set_int(data, "partial_copy_frames", bs->partial_copy_frames.load());
+			calldata_set_int(data, "full_copy_frames", bs->full_copy_frames.load());
+		},
+		this);
+#ifdef OBS_BROWSER_TEST_HOOKS
+	proc_handler_add(
+		ph, "void browser_test_fallback_race()",
+		[](void *p, calldata_t *) {
+			auto *bs = static_cast<BrowserSource *>(p);
+			// Hold the CEF queue while Tick sees both recreation requests.
+			if (QueueCEFTask([]() { os_sleep_ms(250); })) {
+				bs->create_browser = true;
+				bs->RequestCPUFallback("injected overlapping recreation");
+			}
+		},
+		this);
+	proc_handler_add(
+		ph, "void browser_test_state(out int creations, out int attached, out int peak)",
+		[](void *p, calldata_t *data) {
+			auto *bs = static_cast<BrowserSource *>(p);
+			calldata_set_int(data, "creations", bs->test_browser_creations.load());
+			calldata_set_int(data, "attached", bs->test_attached_browsers.load());
+			calldata_set_int(data, "peak", bs->test_peak_browsers.load());
+		},
+		this);
+#endif
+#endif
 
 	/* defer update */
 	obs_source_update(source, nullptr);
@@ -118,8 +164,18 @@ static void ActuallyCloseBrowser(CefRefPtr<CefBrowser> cefBrowser)
 	CefRefPtr<CefClient> client = cefBrowser->GetHost()->GetClient();
 	BrowserClient *bc = reinterpret_cast<BrowserClient *>(client.get());
 	if (bc) {
+#if defined(__linux__) && defined(OBS_BROWSER_TEST_HOOKS)
+		if (bc->bs) {
+			--bc->bs->test_attached_browsers;
+		}
+#endif
 		bc->bs = nullptr;
 	}
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+	if (cefBrowser->GetHost()->HasDevTools()) {
+		cefBrowser->GetHost()->CloseDevTools();
+	}
+#endif
 
 	/*
          * This stops rendering
@@ -148,6 +204,10 @@ void BrowserSource::Destroy()
 	}
 	*p_prev_next = next;
 
+	if (!cef_started_event || os_event_try(cef_started_event) != 0) {
+		delete this;
+		return;
+	}
 	QueueCEFTask([this]() { delete this; });
 }
 
@@ -162,8 +222,11 @@ void BrowserSource::ExecuteOnBrowser(BrowserFunc func, bool async)
 			return;
 		}
 #endif
-		os_event_t *finishedEvent;
-		os_event_init(&finishedEvent, OS_EVENT_TYPE_AUTO);
+		os_event_t *finishedEvent = nullptr;
+		if (os_event_init(&finishedEvent, OS_EVENT_TYPE_AUTO) != 0) {
+			blog(LOG_ERROR, "[obs-browser]: Could not create browser task event");
+			return;
+		}
 		bool success = QueueCEFTask([&]() {
 			if (!!cefBrowser) {
 				func(cefBrowser);
@@ -189,6 +252,9 @@ void BrowserSource::ExecuteOnBrowser(BrowserFunc func, bool async)
 bool BrowserSource::CreateBrowser()
 {
 	return QueueCEFTask([this]() {
+		if (destroying || GetBrowser() || (shutdown_on_invisible && !obs_source_showing(source))) {
+			return;
+		}
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 		if (hwaccel) {
 			obs_enter_graphics();
@@ -203,8 +269,12 @@ bool BrowserSource::CreateBrowser()
 		bool hwaccel = false;
 #endif
 
+		bool use_shared_texture = hwaccel && tex_sharing_avail;
+#ifdef __linux__
+		use_shared_texture = use_shared_texture && !force_cpu.load();
+#endif
 		CefRefPtr<BrowserClient> browserClient =
-			new BrowserClient(this, hwaccel && tex_sharing_avail, reroute_audio, webpage_control_level);
+			new BrowserClient(this, use_shared_texture, reroute_audio, webpage_control_level);
 
 		CefWindowInfo windowInfo;
 		windowInfo.bounds.width = width;
@@ -212,7 +282,12 @@ bool BrowserSource::CreateBrowser()
 		windowInfo.windowless_rendering_enabled = true;
 
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
-		windowInfo.shared_texture_enabled = hwaccel;
+		windowInfo.shared_texture_enabled = use_shared_texture;
+#ifdef __linux__
+		gpu_frame_received = false;
+		gpu_started_ns = os_gettime_ns();
+		gpu_active = windowInfo.shared_texture_enabled;
+#endif
 #endif
 
 		CefBrowserSettings cefBrowserSettings;
@@ -242,6 +317,21 @@ bool BrowserSource::CreateBrowser()
 								 CefRefPtr<CefDictionaryValue>(), nullptr);
 
 		SetBrowser(browser);
+		if (!browser) {
+#ifdef __linux__
+			if (gpu_active)
+				RequestCPUFallback("CreateBrowserSync failed");
+#endif
+			blog(LOG_ERROR, "[obs-browser]: Could not create browser source");
+			return;
+		}
+#if defined(__linux__) && defined(OBS_BROWSER_TEST_HOOKS)
+		++test_browser_creations;
+		const auto attached = ++test_attached_browsers;
+		if (attached > test_peak_browsers) {
+			test_peak_browsers = attached;
+		}
+#endif
 
 		if (reroute_audio)
 			cefBrowser->GetHost()->SetAudioMuted(true);
@@ -438,6 +528,35 @@ void BrowserSource::Refresh()
 	ExecuteOnBrowser([](CefRefPtr<CefBrowser> cefBrowser) { cefBrowser->ReloadIgnoreCache(); }, true);
 }
 
+#if defined(OBS_BROWSER_ENABLE_DEVTOOLS) && CHROME_VERSION_BUILD >= 6533
+// Keep source CSS and menu handlers out of DevTools.
+class SourceDevToolsClient : public CefClient, public CefLifeSpanHandler {
+public:
+	CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+	void OnAfterCreated(CefRefPtr<CefBrowser>) override
+	{
+		blog(LOG_INFO, "[obs-browser]: Source DevTools window created");
+	}
+	void OnBeforeClose(CefRefPtr<CefBrowser>) override
+	{
+		blog(LOG_INFO, "[obs-browser]: Source DevTools window closed");
+	}
+	IMPLEMENT_REFCOUNTING(SourceDevToolsClient);
+};
+
+void BrowserSource::Inspect()
+{
+	ExecuteOnBrowser(
+		[](CefRefPtr<CefBrowser> browser) {
+			CefWindowInfo info;
+			info.bounds = CefRect(0, 0, 900, 700);
+			browser->GetHost()->ShowDevTools(info, new SourceDevToolsClient(), CefBrowserSettings(),
+							 CefPoint());
+		},
+		true);
+}
+#endif
+
 void BrowserSource::SetBrowser(CefRefPtr<CefBrowser> b)
 {
 	std::lock_guard<std::recursive_mutex> auto_lock(lockBrowser);
@@ -564,14 +683,73 @@ void BrowserSource::Update(obs_data_t *settings)
 	first_update = false;
 }
 
+#ifdef __linux__
+void BrowserSource::RequestCPUFallback(const char *reason)
+{
+	if (!force_cpu.exchange(true)) {
+		blog(LOG_WARNING, "[obs-browser]: Source '%s': CPU paint fallback (%s); browser will reload",
+		     obs_source_get_name(source), reason);
+		fallback_requested = true;
+	}
+}
+#endif
+
 void BrowserSource::Tick()
 {
-	if (os_event_try(cef_started_event) != 0) {
+	if (destroying || os_event_try(cef_started_event) != 0) {
 		return;
 	}
-
-	if (create_browser && CreateBrowser()) {
+#ifdef __linux__
+	// Static pages may stop repainting after the first frame.
+	if (gpu_active && !gpu_frame_received) {
+		if (!obs_source_showing(source)) {
+			gpu_started_ns = os_gettime_ns();
+		} else if (os_gettime_ns() - gpu_started_ns.load() > 15000000000ULL) {
+			RequestCPUFallback("no accelerated paint within 15 seconds");
+		}
+	}
+	if (fallback_requested.exchange(false)) {
+		gpu_active = false;
+		fallback_in_progress = true;
 		create_browser = false;
+		// Close and destroy textures on the CEF thread before queuing CPU creation.
+		if (!QueueCEFTask([this]() {
+			    if (destroying) {
+				    return;
+			    }
+			    if (auto browser = GetBrowser()) {
+				    ActuallyCloseBrowser(browser);
+			    }
+			    SetBrowser(nullptr);
+			    DestroyTextures();
+			    create_browser = !shutdown_on_invisible || obs_source_showing(source);
+			    fallback_in_progress = false;
+		    })) {
+			fallback_requested = true;
+			fallback_in_progress = false;
+		}
+		return;
+	}
+	if (fallback_in_progress) {
+		return;
+	}
+	if (std::getenv("OBS_BROWSER_STATS_LOG")) {
+		const uint64_t now = os_gettime_ns();
+		if (now - last_stats_ns > 5000000000ULL) {
+			last_stats_ns = now;
+			blog(LOG_INFO,
+			     "[obs-browser stats] '%s': gpu=%llu cpu=%llu full_copy=%llu partial_copy=%llu "
+			     "import_ns=%llu copy_ns=%llu",
+			     obs_source_get_name(source), (unsigned long long)gpu_frames.load(),
+			     (unsigned long long)cpu_frames.load(), (unsigned long long)full_copy_frames.load(),
+			     (unsigned long long)partial_copy_frames.load(), (unsigned long long)gpu_import_ns.load(),
+			     (unsigned long long)gpu_copy_ns.load());
+		}
+	}
+#endif
+
+	if (create_browser.exchange(false) && !CreateBrowser()) {
+		create_browser = true;
 	}
 #if defined(ENABLE_BROWSER_SHARED_TEXTURE)
 #if defined(BROWSER_EXTERNAL_BEGIN_FRAME_ENABLED)
@@ -603,6 +781,9 @@ void BrowserSource::Render()
 #endif
 
 	if (texture) {
+#ifdef __linux__
+		++render_frames;
+#endif
 #ifdef __APPLE__
 		int type = gs_get_device_type();
 		gs_effect_t *effect;
@@ -620,6 +801,9 @@ void BrowserSource::Render()
 		gs_texture_t *draw_texture = texture;
 		if (!linear_sample && !obs_source_get_texcoords_centered(source)) {
 			gs_copy_texture(extra_texture, texture);
+#ifdef __linux__
+			++extra_copy_frames;
+#endif
 			draw_texture = extra_texture;
 
 			linear_sample = true;
